@@ -19,6 +19,9 @@ impl App {
         // Creating Vulkan instance. It is needed for enumerating physical devices and creating logical device.
         let instance = unsafe { vulkan::create_instance(window, &entry, &mut app_data) }?;
 
+        // Picking physical device. It is needed for creating a logical device. Each physical device has it's own properties and features.
+        unsafe { vulkan::pick_physical_device(&instance, &mut app_data) }?;
+
         Ok(Self {
             entry,
             instance,
@@ -43,12 +46,14 @@ impl Drop for App {
 
 pub struct AppData {
     pub debug_utils_messenger: vk::DebugUtilsMessengerEXT,
+    pub physical_device: vk::PhysicalDevice,
 }
 
 impl AppData {
     fn new() -> Self {
         Self {
             debug_utils_messenger: Default::default(),
+            physical_device: Default::default(),
         }
     }
 }

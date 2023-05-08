@@ -34,3 +34,20 @@ impl From<LoadingError> for ApplicationError {
         Self::EngineError(value.to_string())
     }
 }
+
+impl From<SuitabilityError> for ApplicationError {
+    fn from(value: SuitabilityError) -> Self {
+        Self::EngineError(value.0)
+    }
+}
+
+#[derive(Debug)]
+pub struct SuitabilityError(pub String);
+
+impl Display for SuitabilityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Error for SuitabilityError {}

@@ -1,5 +1,5 @@
 use crate::app::AppData;
-use crate::error::ApplicationError;
+use crate::error::{ApplicationError, SuitabilityError};
 use ash::{extensions, vk, Entry, Instance};
 use log::{debug, error, info, trace, warn};
 use std::ffi::{c_void, CStr, CString};
@@ -10,6 +10,37 @@ const PORTABILITY_MACOS_VERSION: u32 = vk::make_api_version(0, 1, 3, 216);
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 const VALIDATION_LAYER_NAME: &CStr =
     unsafe { &CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
+
+struct QueueFamilyIndices {
+    graphics_queue_family: u32,
+}
+
+impl QueueFamilyIndices {
+    // This function checks the given physical device for required queue families.
+    unsafe fn get(
+        instance: &Instance,
+        app_data: &mut AppData,
+        physical_device: vk::PhysicalDevice,
+    ) -> Result<Self, ApplicationError> {
+        let queue_family_properties =
+            instance.get_physical_device_queue_family_properties(physical_device);
+
+        let graphics_queue_family = queue_family_properties
+            .into_iter()
+            .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
+            .map(|i| i as u32);
+
+        if let Some(graphics_queue_family) = graphics_queue_family {
+            Ok(Self {
+                graphics_queue_family,
+            })
+        } else {
+            Err(SuitabilityError(
+                "Missing required queue families.".to_string(),
+            ))?
+        }
+    }
+}
 
 // Creates a Vulkan instance.
 pub unsafe fn create_instance(
@@ -126,4 +157,59 @@ extern "system" fn debug_callback(
     }
 
     vk::FALSE
+}
+
+// This function picks the required physical device.
+pub unsafe fn pick_physical_device(
+    instance: &Instance,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    for physical_device in instance.enumerate_physical_devices()? {
+        let physical_device_name = CStr::from_ptr(
+            instance
+                .get_physical_device_properties(physical_device)
+                .device_name
+                .as_ptr(),
+        );
+
+        if let Err(error) = check_physical_device(instance, app_data, physical_device) {
+            warn!(
+                "Skipping physical device ('{:?}'): {}",
+                physical_device_name, error
+            );
+        } else {
+            info!("Selected physical device ('{:?}').", physical_device_name);
+            app_data.physical_device = physical_device;
+            return Ok(());
+        }
+    }
+
+    Err(SuitabilityError(
+        "Failed to find suitable physical device.".to_string(),
+    ))?
+}
+
+// This function checks the given physical device for required properties and features.
+unsafe fn check_physical_device(
+    instance: &Instance,
+    app_data: &mut AppData,
+    physical_device: vk::PhysicalDevice,
+) -> Result<(), ApplicationError> {
+    let physical_device_properties = instance.get_physical_device_properties(physical_device);
+    if physical_device_properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
+        return Err(SuitabilityError(
+            "Only discrete GPUs are supported.".to_string(),
+        ))?;
+    }
+
+    let physical_device_features = instance.get_physical_device_features(physical_device);
+    if physical_device_features.geometry_shader != vk::TRUE {
+        return Err(SuitabilityError(
+            "Missing geometry shader support.".to_string(),
+        ))?;
+    }
+
+    QueueFamilyIndices::get(instance, app_data, physical_device)?;
+
+    Ok(())
 }
