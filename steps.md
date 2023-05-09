@@ -18,18 +18,23 @@
 #### 3.5. Push previous struct to the instance create info struct
 #### 3.6. Create debug utils messenger
 
-## 4. Physical device and queue families selection
-#### 4.1. Enumerate physical devices
-#### 4.2. Check for appropriate physical device
-##### 4.2.1. Check for appropriate physical device properties
-##### 4.2.2. Check for appropriate physical device features
-##### 4.2.3. Check for appropriate physical device queue family
-#### 4.3. If physical device passes all checks, store physical device and needed queue family indices in relevant structs
+## 4. Window surface creation
+#### 4.1. Create preferred platform surface create info
+#### 4.2. Create preferred platform surface loader
+#### 4.3. Create surface with previos step surface loader
 
-## 5. Logical device creation and acquiring queues
-#### 5.1. Get required queue family indices
-#### 5.2. Create device queue create info
-#### 5.3. Create required list of device layers names, extensions names and features
-#### 5.4. Create device create info
-#### 5.5. Create device
-#### 5.6. Store required queue handles in an appropriate place
+## 5. Physical device and queue families selection
+#### 5.1. Enumerate physical devices
+#### 5.2. Check for appropriate physical device
+##### 5.2.1. Check for appropriate physical device properties
+##### 5.2.2. Check for appropriate physical device features
+##### 5.2.3. Check for appropriate physical device queue families
+#### 5.3. If physical device passes all checks, store physical device and needed queue family indices in relevant structs
+
+## 6. Logical device creation and acquiring queues
+#### 6.1. Get required queue family indices
+#### 6.2. Create device queue create info
+#### 6.3. Create required list of device layers names, extensions names and features
+#### 6.4. Create device create info
+#### 6.5. Create device
+#### 6.6. Store required queue handles in an appropriate place

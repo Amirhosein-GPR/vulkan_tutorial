@@ -2,22 +2,26 @@ use crate::app::AppData;
 use crate::error::{ApplicationError, SuitabilityError};
 use ash::{extensions, vk, Device, Entry, Instance};
 use log::{debug, error, info, trace, warn};
+use std::collections::HashSet;
 use std::ffi::{c_void, CStr, CString};
+use winit::platform::x11::WindowExtX11;
 use winit::window::Window;
 
 // This version number is important for platforms that not fully conform to the Vulkan API specificaiton.
 const PORTABILITY_MACOS_VERSION: u32 = vk::make_api_version(0, 1, 3, 216);
-const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
+pub const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 const VALIDATION_LAYER_NAME: &CStr =
     unsafe { &CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
 
 struct QueueFamilyIndices {
     graphics_queue_family: u32,
+    present_queue_family: u32,
 }
 
 impl QueueFamilyIndices {
     // This function checks the given physical device for required queue families.
     unsafe fn get(
+        entry: &Entry,
         instance: &Instance,
         app_data: &mut AppData,
         physical_device: vk::PhysicalDevice,
@@ -25,14 +29,32 @@ impl QueueFamilyIndices {
         let queue_family_properties =
             instance.get_physical_device_queue_family_properties(physical_device);
 
+        // Checking for a graphics queue family.
         let graphics_queue_family = queue_family_properties
-            .into_iter()
+            .iter()
             .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
             .map(|i| i as u32);
 
-        if let Some(graphics_queue_family) = graphics_queue_family {
+        // Checking for a present queue family.
+        let mut present_queue_family = None;
+        let surface_loader = extensions::khr::Surface::new(entry, instance);
+        for (index, _queue_family_properties) in queue_family_properties.into_iter().enumerate() {
+            if surface_loader.get_physical_device_surface_support(
+                physical_device,
+                index as u32,
+                app_data.surface,
+            )? {
+                present_queue_family = Some(index as u32);
+                break;
+            }
+        }
+
+        if let (Some(graphics_queue_family), Some(present_queue_family)) =
+            (graphics_queue_family, present_queue_family)
+        {
             Ok(Self {
                 graphics_queue_family,
+                present_queue_family,
             })
         } else {
             Err(SuitabilityError(
@@ -161,6 +183,7 @@ extern "system" fn debug_callback(
 
 // This function picks the required physical device.
 pub unsafe fn pick_physical_device(
+    entry: &Entry,
     instance: &Instance,
     app_data: &mut AppData,
 ) -> Result<(), ApplicationError> {
@@ -172,7 +195,7 @@ pub unsafe fn pick_physical_device(
                 .as_ptr(),
         );
 
-        if let Err(error) = check_physical_device(instance, app_data, physical_device) {
+        if let Err(error) = check_physical_device(entry, instance, app_data, physical_device) {
             warn!(
                 "Skipping physical device ('{:?}'): {}",
                 physical_device_name, error
@@ -191,6 +214,7 @@ pub unsafe fn pick_physical_device(
 
 // This function checks the given physical device for required properties and features.
 unsafe fn check_physical_device(
+    entry: &Entry,
     instance: &Instance,
     app_data: &mut AppData,
     physical_device: vk::PhysicalDevice,
@@ -209,7 +233,7 @@ unsafe fn check_physical_device(
         ))?;
     }
 
-    QueueFamilyIndices::get(instance, app_data, physical_device)?;
+    QueueFamilyIndices::get(entry, instance, app_data, physical_device)?;
 
     Ok(())
 }
@@ -221,13 +245,23 @@ pub unsafe fn create_device(
     app_data: &mut AppData,
 ) -> Result<Device, ApplicationError> {
     let queue_family_indices =
-        QueueFamilyIndices::get(instance, app_data, app_data.physical_device)?;
+        QueueFamilyIndices::get(entry, instance, app_data, app_data.physical_device)?;
 
-    let queue_prioriteis = [1.0];
-    let device_queue_create_infos = [vk::DeviceQueueCreateInfo::builder()
-        .queue_family_index(queue_family_indices.graphics_queue_family)
-        .queue_priorities(&queue_prioriteis)
-        .build()];
+    // Using hash set to avoid possible duplicated queue family indices.
+    let mut unique_indices = HashSet::new();
+    unique_indices.insert(queue_family_indices.graphics_queue_family);
+    unique_indices.insert(queue_family_indices.present_queue_family);
+
+    let queue_priorities = [1.0];
+    let device_queue_create_infos = unique_indices
+        .into_iter()
+        .map(|i| {
+            vk::DeviceQueueCreateInfo::builder()
+                .queue_family_index(i)
+                .queue_priorities(&queue_priorities)
+                .build()
+        })
+        .collect::<Vec<_>>();
 
     let mut device_layers_names = Vec::new();
     let mut device_extensions_names = Vec::new();
@@ -254,6 +288,23 @@ pub unsafe fn create_device(
 
     app_data.graphics_queue =
         device.get_device_queue(queue_family_indices.graphics_queue_family, 0);
+    app_data.present_queue = device.get_device_queue(queue_family_indices.present_queue_family, 0);
 
     Ok(device)
+}
+
+// Creates a surface with the help of winit and vulkan extensions.
+pub unsafe fn create_surface(
+    entry: &Entry,
+    instance: &Instance,
+    window: &Window,
+) -> Result<vk::SurfaceKHR, ApplicationError> {
+    let xlib_surface_create_info = vk::XlibSurfaceCreateInfoKHR::builder()
+        .dpy(window.xlib_display().unwrap() as *mut vk::Display)
+        .window(window.xlib_window().unwrap());
+
+    let surface_loader = extensions::khr::XlibSurface::new(entry, instance);
+    let surface = surface_loader.create_xlib_surface(&xlib_surface_create_info, None)?;
+
+    Ok(surface)
 }
