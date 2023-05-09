@@ -27,3 +27,9 @@
 #### 4.3. If physical device passes all checks, store physical device and needed queue family indices in relevant structs
 
 ## 5. Logical device creation and acquiring queues
+#### 5.1. Get required queue family indices
+#### 5.2. Create device queue create info
+#### 5.3. Create required list of device layers names, extensions names and features
+#### 5.4. Create device create info
+#### 5.5. Create device
+#### 5.6. Store required queue handles in an appropriate place

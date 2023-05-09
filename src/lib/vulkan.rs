@@ -1,6 +1,6 @@
 use crate::app::AppData;
 use crate::error::{ApplicationError, SuitabilityError};
-use ash::{extensions, vk, Entry, Instance};
+use ash::{extensions, vk, Device, Entry, Instance};
 use log::{debug, error, info, trace, warn};
 use std::ffi::{c_void, CStr, CString};
 use winit::window::Window;
@@ -212,4 +212,48 @@ unsafe fn check_physical_device(
     QueueFamilyIndices::get(instance, app_data, physical_device)?;
 
     Ok(())
+}
+
+// This function creates a logical device and retrieves queue handles that are automatically created with the logical device.
+pub unsafe fn create_device(
+    entry: &Entry,
+    instance: &Instance,
+    app_data: &mut AppData,
+) -> Result<Device, ApplicationError> {
+    let queue_family_indices =
+        QueueFamilyIndices::get(instance, app_data, app_data.physical_device)?;
+
+    let queue_prioriteis = [1.0];
+    let device_queue_create_infos = [vk::DeviceQueueCreateInfo::builder()
+        .queue_family_index(queue_family_indices.graphics_queue_family)
+        .queue_priorities(&queue_prioriteis)
+        .build()];
+
+    let mut device_layers_names = Vec::new();
+    let mut device_extensions_names = Vec::new();
+    let device_features = vk::PhysicalDeviceFeatures::builder();
+    if VALIDATION_ENABLED {
+        device_layers_names.push(VALIDATION_LAYER_NAME.as_ptr());
+    }
+
+    /* Starting from Vulkan version 1.3.216, platforms that not fully conform to the Vulkan API specification should enable
+    this extension and pass it to device create info struct. */
+    if cfg!(target_os = "macos")
+        && entry.try_enumerate_instance_version()?.unwrap() >= PORTABILITY_MACOS_VERSION
+    {
+        device_extensions_names.push(vk::KhrPortabilitySubsetFn::name().as_ptr());
+    }
+
+    let device_create_info = vk::DeviceCreateInfo::builder()
+        .queue_create_infos(&device_queue_create_infos)
+        .enabled_layer_names(&device_layers_names)
+        .enabled_extension_names(&device_extensions_names)
+        .enabled_features(&device_features);
+
+    let device = instance.create_device(app_data.physical_device, &device_create_info, None)?;
+
+    app_data.graphics_queue =
+        device.get_device_queue(queue_family_indices.graphics_queue_family, 0);
+
+    Ok(device)
 }
