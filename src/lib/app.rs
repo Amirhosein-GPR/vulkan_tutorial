@@ -32,6 +32,8 @@ impl App {
 
         unsafe { vulkan::create_swapchain(&entry, &window, &instance, &device, &mut app_data) }?;
 
+        unsafe { vulkan::create_swapchain_image_views(&device, &mut app_data) }?;
+
         Ok(Self {
             entry,
             instance,
@@ -48,6 +50,11 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
+            self.app_data
+                .swapchain_image_views
+                .iter()
+                .for_each(|v| self.device.destroy_image_view(*v, None));
+
             extensions::khr::Swapchain::new(&self.instance, &self.device)
                 .destroy_swapchain(self.app_data.swapchain, None);
 
@@ -73,9 +80,10 @@ pub struct AppData {
     pub present_queue: vk::Queue,
     pub surface: vk::SurfaceKHR,
     pub swapchain: vk::SwapchainKHR,
-    pub swapchain_images: Vec<vk::Image>,
     pub swapchain_format: vk::Format,
     pub swapchain_extent: vk::Extent2D,
+    pub swapchain_images: Vec<vk::Image>,
+    pub swapchain_image_views: Vec<vk::ImageView>,
 }
 
 impl AppData {
@@ -87,9 +95,10 @@ impl AppData {
             present_queue: Default::default(),
             surface: Default::default(),
             swapchain: Default::default(),
-            swapchain_images: Default::default(),
             swapchain_format: Default::default(),
             swapchain_extent: Default::default(),
+            swapchain_images: Default::default(),
+            swapchain_image_views: Default::default(),
         }
     }
 }

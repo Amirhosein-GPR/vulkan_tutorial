@@ -46,3 +46,10 @@
 #### 7.3. Create swapchain
 #### 7.4. Get swapchain images handles and store them in an appropriate place
 #### 7.5. Store swapchain format and swapchain extent in an appropriate place
+
+## 8. Creating image views
+#### 8.1. Create image view create info
+##### 8.1.1 Create component mapping
+##### 8.1.2 Create subresource range
+##### 8.1.2 Create image view create info
+#### 8.2. Create image views

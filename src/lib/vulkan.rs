@@ -488,3 +488,38 @@ pub unsafe fn create_swapchain(
 
     Ok(())
 }
+
+// Creates image views, which are needed to work with images in the swapchain.
+pub unsafe fn create_swapchain_image_views(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    app_data.swapchain_image_views = app_data
+        .swapchain_images
+        .iter()
+        .map(|i| {
+            let component_mapping = vk::ComponentMapping::builder()
+                .r(vk::ComponentSwizzle::IDENTITY)
+                .g(vk::ComponentSwizzle::IDENTITY)
+                .b(vk::ComponentSwizzle::IDENTITY)
+                .a(vk::ComponentSwizzle::IDENTITY)
+                .build();
+            let subresource_range = vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1)
+                .build();
+            let image_view_create_info = vk::ImageViewCreateInfo::builder()
+                .image(*i)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(app_data.swapchain_format)
+                .components(component_mapping)
+                .subresource_range(subresource_range);
+
+            device.create_image_view(&image_view_create_info, None)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(())
+}
