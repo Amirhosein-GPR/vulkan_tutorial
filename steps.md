@@ -37,4 +37,12 @@
 #### 6.3. Create required list of device layers names, extensions names and features
 #### 6.4. Create device create info
 #### 6.5. Create device
-#### 6.6. Store required queue handles in an appropriate place
+#### 6.6. Get required queue handles and store them in an appropriate place
+
+## 7. Swapchain creation and acquiring it's images
+#### 7.1. Checks physical device to support logical device extensions, including swapchain extension
+#### 7.2. Checks physical device and window for surface properties needed for creating a swapchain
+#### 7.3. Create swapchain create info
+#### 7.3. Create swapchain
+#### 7.4. Get swapchain images handles and store them in an appropriate place
+#### 7.5. Store swapchain format and swapchain extent in an appropriate place

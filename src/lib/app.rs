@@ -30,6 +30,8 @@ impl App {
         // Creating logical device and storing queue handles in app data by calling this function.
         let device = unsafe { vulkan::create_device(&entry, &instance, &mut app_data) }?;
 
+        unsafe { vulkan::create_swapchain(&entry, &window, &instance, &device, &mut app_data) }?;
+
         Ok(Self {
             entry,
             instance,
@@ -46,6 +48,9 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
+            extensions::khr::Swapchain::new(&self.instance, &self.device)
+                .destroy_swapchain(self.app_data.swapchain, None);
+
             extensions::khr::Surface::new(&self.entry, &self.instance)
                 .destroy_surface(self.app_data.surface, None);
 
@@ -67,6 +72,10 @@ pub struct AppData {
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,
     pub surface: vk::SurfaceKHR,
+    pub swapchain: vk::SwapchainKHR,
+    pub swapchain_images: Vec<vk::Image>,
+    pub swapchain_format: vk::Format,
+    pub swapchain_extent: vk::Extent2D,
 }
 
 impl AppData {
@@ -77,6 +86,10 @@ impl AppData {
             graphics_queue: Default::default(),
             present_queue: Default::default(),
             surface: Default::default(),
+            swapchain: Default::default(),
+            swapchain_images: Default::default(),
+            swapchain_format: Default::default(),
+            swapchain_extent: Default::default(),
         }
     }
 }

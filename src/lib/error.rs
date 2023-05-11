@@ -37,7 +37,7 @@ impl From<LoadingError> for ApplicationError {
 
 impl From<SuitabilityError> for ApplicationError {
     fn from(value: SuitabilityError) -> Self {
-        Self::EngineError(value.0)
+        Self::EngineError(format!("Suitability error: {}", value.0))
     }
 }
 

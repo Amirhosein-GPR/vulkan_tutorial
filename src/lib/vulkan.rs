@@ -12,6 +12,7 @@ const PORTABILITY_MACOS_VERSION: u32 = vk::make_api_version(0, 1, 3, 216);
 pub const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 const VALIDATION_LAYER_NAME: &CStr =
     unsafe { &CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
+const DEVICE_EXTENSIONS_NAMES: &[&CStr] = &[extensions::khr::Swapchain::name()];
 
 struct QueueFamilyIndices {
     graphics_queue_family: u32,
@@ -61,6 +62,33 @@ impl QueueFamilyIndices {
                 "Missing required queue families.".to_string(),
             ))?
         }
+    }
+}
+
+struct SwapchainSupport {
+    surface_capabilites: vk::SurfaceCapabilitiesKHR,
+    surface_formats: Vec<vk::SurfaceFormatKHR>,
+    present_modes: Vec<vk::PresentModeKHR>,
+}
+
+impl SwapchainSupport {
+    // Gets physical device surface properties.
+    unsafe fn get(
+        entry: &Entry,
+        instance: &Instance,
+        app_data: &mut AppData,
+        physical_device: vk::PhysicalDevice,
+    ) -> Result<Self, ApplicationError> {
+        let surface_loader = extensions::khr::Surface::new(entry, instance);
+
+        Ok(Self {
+            surface_capabilites: surface_loader
+                .get_physical_device_surface_capabilities(physical_device, app_data.surface)?,
+            surface_formats: surface_loader
+                .get_physical_device_surface_formats(physical_device, app_data.surface)?,
+            present_modes: surface_loader
+                .get_physical_device_surface_present_modes(physical_device, app_data.surface)?,
+        })
     }
 }
 
@@ -235,6 +263,16 @@ unsafe fn check_physical_device(
 
     QueueFamilyIndices::get(entry, instance, app_data, physical_device)?;
 
+    check_physical_device_extensions(instance, physical_device)?;
+
+    // If there isn't any surface formats or present modes available, then there's no sufficient support for swapchain in current physical device.
+    let swapchain_support = SwapchainSupport::get(entry, instance, app_data, physical_device)?;
+    if swapchain_support.surface_formats.is_empty() || swapchain_support.present_modes.is_empty() {
+        return Err(SuitabilityError(
+            "Insufficient swapchain support.".to_string(),
+        ))?;
+    }
+
     Ok(())
 }
 
@@ -264,7 +302,10 @@ pub unsafe fn create_device(
         .collect::<Vec<_>>();
 
     let mut device_layers_names = Vec::new();
-    let mut device_extensions_names = Vec::new();
+    let mut device_extensions_names = DEVICE_EXTENSIONS_NAMES
+        .into_iter()
+        .map(|e| e.as_ptr())
+        .collect::<Vec<_>>();
     let device_features = vk::PhysicalDeviceFeatures::builder();
     if VALIDATION_ENABLED {
         device_layers_names.push(VALIDATION_LAYER_NAME.as_ptr());
@@ -307,4 +348,143 @@ pub unsafe fn create_surface(
     let surface = surface_loader.create_xlib_surface(&xlib_surface_create_info, None)?;
 
     Ok(surface)
+}
+
+// Checks physical device to support logical device extensions.
+unsafe fn check_physical_device_extensions(
+    instance: &Instance,
+    physical_device: vk::PhysicalDevice,
+) -> Result<(), ApplicationError> {
+    let available_device_extensions_names = instance
+        .enumerate_device_extension_properties(physical_device)?
+        .into_iter()
+        .map(|e| e.extension_name)
+        .collect::<Vec<_>>();
+    let available_device_extensions_names = available_device_extensions_names
+        .iter()
+        .map(|e| CStr::from_ptr(e.as_ptr()))
+        .collect::<Vec<_>>();
+
+    if DEVICE_EXTENSIONS_NAMES
+        .iter()
+        .all(|e| available_device_extensions_names.contains(e))
+    {
+        Ok(())
+    } else {
+        Err(SuitabilityError(
+            "Missing required device extensions.".to_string(),
+        ))?
+    }
+}
+
+// Picks one of many possible surface formats.
+unsafe fn get_swapchain_surface_format(
+    surface_fomrats: &[vk::SurfaceFormatKHR],
+) -> vk::SurfaceFormatKHR {
+    surface_fomrats
+        .into_iter()
+        .cloned()
+        .find(|f| {
+            f.format == vk::Format::B8G8R8A8_SRGB
+                && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+        })
+        .unwrap_or_else(|| surface_fomrats[0])
+}
+
+// Picks one of many possible surface present modes.
+unsafe fn get_swapchain_present_mode(present_modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
+    present_modes
+        .into_iter()
+        .cloned()
+        .find(|m| *m == vk::PresentModeKHR::MAILBOX)
+        .unwrap_or_else(|| vk::PresentModeKHR::FIFO)
+}
+
+// Gets surface extent from surface capabilites or creates a new one if we can decide on it's size.
+unsafe fn get_swapchain_extent(
+    window: &Window,
+    surface_capabilities: vk::SurfaceCapabilitiesKHR,
+) -> vk::Extent2D {
+    /* u32::MAX is the maximum u32 number value. Here it has a meaning. If current extent width is equal to u32::MAX,
+    it means we can pick a resolution that best matches the window within min image extent and max image extent.*/
+    if surface_capabilities.current_extent.width != u32::MAX {
+        surface_capabilities.current_extent
+    } else {
+        let window_size = window.inner_size();
+        let clamp = |min: u32, max: u32, value: u32| min.max(max.min(value));
+        vk::Extent2D::builder()
+            .width(clamp(
+                surface_capabilities.min_image_extent.width,
+                surface_capabilities.max_image_extent.width,
+                window_size.width,
+            ))
+            .height(clamp(
+                surface_capabilities.min_image_extent.height,
+                surface_capabilities.max_image_extent.height,
+                window_size.height,
+            ))
+            .build()
+    }
+}
+
+// Creates swapchain and retrieves handles to images in it and store them in app data.
+pub unsafe fn create_swapchain(
+    entry: &Entry,
+    window: &Window,
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let queue_family_indices =
+        QueueFamilyIndices::get(entry, instance, app_data, app_data.physical_device)?;
+    let swapchain_support =
+        SwapchainSupport::get(entry, instance, app_data, app_data.physical_device)?;
+
+    let surface_format = get_swapchain_surface_format(&swapchain_support.surface_formats);
+    let present_mode = get_swapchain_present_mode(&swapchain_support.present_modes);
+    let extent = get_swapchain_extent(window, swapchain_support.surface_capabilites);
+
+    let mut image_count = swapchain_support.surface_capabilites.min_image_count + 1;
+    // '0' for max image count is a special value which means there is no maximum for image count.
+    if swapchain_support.surface_capabilites.max_image_count != 0
+        && image_count > swapchain_support.surface_capabilites.max_image_count
+    {
+        image_count = swapchain_support.surface_capabilites.max_image_count;
+    }
+
+    let mut seperate_queue_family_indices = Vec::new();
+    // Concurrent image sharing mode is used for at least 2 different queue families.
+    let image_sharing_mode = if queue_family_indices.graphics_queue_family
+        != queue_family_indices.present_queue_family
+    {
+        seperate_queue_family_indices.push(queue_family_indices.graphics_queue_family);
+        seperate_queue_family_indices.push(queue_family_indices.present_queue_family);
+        vk::SharingMode::CONCURRENT
+    } else {
+        vk::SharingMode::EXCLUSIVE
+    };
+
+    let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+        .surface(app_data.surface)
+        .min_image_count(image_count)
+        .image_format(surface_format.format)
+        .image_color_space(surface_format.color_space)
+        .image_extent(extent)
+        .image_array_layers(1)
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+        .image_sharing_mode(image_sharing_mode)
+        .queue_family_indices(&seperate_queue_family_indices)
+        .pre_transform(swapchain_support.surface_capabilites.current_transform)
+        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+        .present_mode(present_mode)
+        .clipped(true)
+        .old_swapchain(vk::SwapchainKHR::null());
+
+    let swapchain_loader = extensions::khr::Swapchain::new(instance, device);
+    app_data.swapchain = swapchain_loader.create_swapchain(&swapchain_create_info, None)?;
+    app_data.swapchain_images = swapchain_loader.get_swapchain_images(app_data.swapchain)?;
+    app_data.swapchain_format = surface_format.format;
+    app_data.swapchain_extent = extent;
+
+    Ok(())
 }
