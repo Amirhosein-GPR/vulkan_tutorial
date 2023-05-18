@@ -53,3 +53,10 @@
 ##### 8.1.2 Create subresource range
 ##### 8.1.2 Create image view create info
 #### 8.2. Create image views
+
+## 9. Shader modules
+#### 9.1. Write required vertex shader and fragment shader codes in seperate files
+#### 9.2. Compile shader codes
+#### 9.3. Read compiled shader codes (bytecodes) to the program
+#### 9.4. Create shader stage create info for vertex and fragment shaders
+#### 9.5. Destroy shader modules after graphics pipeline has been created

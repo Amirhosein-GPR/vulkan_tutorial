@@ -1,6 +1,6 @@
 use crate::app::AppData;
 use crate::error::{ApplicationError, SuitabilityError};
-use ash::{extensions, vk, Device, Entry, Instance};
+use ash::{extensions, util, vk, Device, Entry, Instance};
 use log::{debug, error, info, trace, warn};
 use std::collections::HashSet;
 use std::ffi::{c_void, CStr, CString};
@@ -522,4 +522,49 @@ pub unsafe fn create_swapchain_image_views(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(())
+}
+
+// Creates pipeline by specifying it's required states and stages.
+pub unsafe fn create_pipeline(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let vertex_shader_spv = include_bytes!("../../shaders/vert.spv");
+    let fragment_shader_spv = include_bytes!("../../shaders/frag.spv");
+
+    let vertex_shader_module = create_shader_module(device, vertex_shader_spv)?;
+    let fragment_shader_module = create_shader_module(device, fragment_shader_spv)?;
+
+    let vertex_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
+        .stage(vk::ShaderStageFlags::VERTEX)
+        .module(vertex_shader_module)
+        .name(CStr::from_bytes_with_nul_unchecked(b"main\0"));
+    let fragment_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
+        .stage(vk::ShaderStageFlags::FRAGMENT)
+        .module(fragment_shader_module)
+        .name(CStr::from_bytes_with_nul_unchecked(b"main\0"));
+
+    device.destroy_shader_module(vertex_shader_module, None);
+    device.destroy_shader_module(fragment_shader_module, None);
+
+    Ok(())
+}
+
+// Creates shader module which is needed to link each shader to pipeline.
+unsafe fn create_shader_module(
+    device: &Device,
+    bytecode: &[u8],
+) -> Result<vk::ShaderModule, ApplicationError> {
+    // Shader module create info needs a u32 slice but what we read is a u8 slice. So we align our u8 slice to a u32 slice.
+    let (prefix, code, suffix) = bytecode.align_to::<u32>();
+    // We also check if our slice is aligned properly which means there shouldn't be any prefix or suffix for the aligned slice.
+    if !prefix.is_empty() || !suffix.is_empty() {
+        return Err(ApplicationError::EngineError(
+            "Shader bytecode is not properly aligned.".to_string(),
+        ));
+    }
+
+    let shader_module_create_info = vk::ShaderModuleCreateInfo::builder().code(&code);
+
+    Ok(device.create_shader_module(&shader_module_create_info, None)?)
 }
