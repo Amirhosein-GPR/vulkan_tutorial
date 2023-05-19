@@ -60,3 +60,18 @@
 #### 9.3. Read compiled shader codes (bytecodes) to the program
 #### 9.4. Create shader stage create info for vertex and fragment shaders
 #### 9.5. Destroy shader modules after graphics pipeline has been created
+
+## 10. Fixed functions
+#### 10.1. Create vertex input state create info
+#### 10.2. Create input assembly state create info
+#### 10.3. Create viewport and scissor
+#### 10.4. Create viewport state create info
+#### 10.5. Create rasterization state create info
+#### 10.6. Create multisample state create info
+#### 10.7. Create depth stencil state create info
+#### 10.8. Create color blend attachment state
+#### 10.9. Create color blend state create info
+#### 10.11. Create dynamic states
+#### 10.12. Create dynamic state create info
+#### 10.13. Create pipeline layout create info
+#### 10.14. Create pipeline layout

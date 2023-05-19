@@ -50,6 +50,9 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
+            self.device
+                .destroy_pipeline_layout(self.app_data.pipeline_layout, None);
+
             self.app_data
                 .swapchain_image_views
                 .iter()
@@ -84,6 +87,7 @@ pub struct AppData {
     pub swapchain_extent: vk::Extent2D,
     pub swapchain_images: Vec<vk::Image>,
     pub swapchain_image_views: Vec<vk::ImageView>,
+    pub pipeline_layout: vk::PipelineLayout,
 }
 
 impl AppData {
@@ -99,6 +103,7 @@ impl AppData {
             swapchain_extent: Default::default(),
             swapchain_images: Default::default(),
             swapchain_image_views: Default::default(),
+            pipeline_layout: Default::default(),
         }
     }
 }

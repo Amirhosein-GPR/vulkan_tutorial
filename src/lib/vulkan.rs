@@ -544,6 +544,73 @@ pub unsafe fn create_pipeline(
         .module(fragment_shader_module)
         .name(CStr::from_bytes_with_nul_unchecked(b"main\0"));
 
+    let vertex_input_state_create_info = vk::PipelineVertexInputStateCreateInfo::builder();
+
+    let input_assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+        .primitive_restart_enable(false);
+
+    let viewports = [vk::Viewport::builder()
+        .x(0.0)
+        .y(0.0)
+        .width(app_data.swapchain_extent.width as f32)
+        .height(app_data.swapchain_extent.height as f32)
+        .min_depth(0.0)
+        .max_depth(1.0)
+        .build()];
+    let scissor_rectangles = [vk::Rect2D::builder()
+        .offset(vk::Offset2D::builder().x(0).y(0).build())
+        .extent(app_data.swapchain_extent)
+        .build()];
+
+    let viewport_state_create_info = vk::PipelineViewportStateCreateInfo::builder()
+        .viewports(&viewports)
+        .scissors(&scissor_rectangles);
+
+    let rasterization_state_create_info = vk::PipelineRasterizationStateCreateInfo::builder()
+        .depth_clamp_enable(false)
+        .rasterizer_discard_enable(false)
+        .polygon_mode(vk::PolygonMode::FILL)
+        .line_width(1.0)
+        .cull_mode(vk::CullModeFlags::BACK)
+        .front_face(vk::FrontFace::CLOCKWISE)
+        .depth_bias_enable(false);
+
+    let multisample_state_create_info = vk::PipelineMultisampleStateCreateInfo::builder()
+        .sample_shading_enable(false)
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+    let depth_stenci_state_create_info = vk::PipelineDepthStencilStateCreateInfo::builder();
+
+    // This color blending configuration is per attached framebuffer
+    let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState::builder()
+        .color_write_mask(vk::ColorComponentFlags::RGBA)
+        .blend_enable(false)
+        .src_color_blend_factor(vk::BlendFactor::ONE)
+        .dst_color_blend_factor(vk::BlendFactor::ZERO)
+        .color_blend_op(vk::BlendOp::ADD)
+        .src_alpha_blend_factor(vk::BlendFactor::ONE)
+        .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
+        .alpha_blend_op(vk::BlendOp::ADD)
+        .build()];
+
+    // This color blending configuration is global
+    let color_blend_state_create_info = vk::PipelineColorBlendStateCreateInfo::builder()
+        .logic_op_enable(false)
+        .logic_op(vk::LogicOp::COPY)
+        .attachments(&color_blend_attachment_states)
+        .blend_constants([0.0, 0.0, 0.0, 0.0]);
+
+    // If we want to use dynamic states, we should mention them here.
+    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::LINE_WIDTH];
+    let dynamic_state_create_info =
+        vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
+
+    // Pipeline layout is used for creating uniform values which are used in shaders and their values can be chaned at drawing times.
+    let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder();
+
+    app_data.pipeline_layout = device.create_pipeline_layout(&pipeline_layout_create_info, None)?;
+
     device.destroy_shader_module(vertex_shader_module, None);
     device.destroy_shader_module(fragment_shader_module, None);
 
