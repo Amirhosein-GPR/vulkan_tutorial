@@ -34,6 +34,10 @@ impl App {
 
         unsafe { vulkan::create_swapchain_image_views(&device, &mut app_data) }?;
 
+        unsafe { vulkan::create_render_pass(&instance, &device, &mut app_data) }?;
+
+        unsafe { vulkan::create_pipeline(&device, &mut app_data) }?;
+
         Ok(Self {
             entry,
             instance,
@@ -50,6 +54,9 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
+            self.device
+                .destroy_render_pass(self.app_data.render_pass, None);
+
             self.device
                 .destroy_pipeline_layout(self.app_data.pipeline_layout, None);
 
@@ -87,6 +94,7 @@ pub struct AppData {
     pub swapchain_extent: vk::Extent2D,
     pub swapchain_images: Vec<vk::Image>,
     pub swapchain_image_views: Vec<vk::ImageView>,
+    pub render_pass: vk::RenderPass,
     pub pipeline_layout: vk::PipelineLayout,
 }
 
@@ -103,6 +111,7 @@ impl AppData {
             swapchain_extent: Default::default(),
             swapchain_images: Default::default(),
             swapchain_image_views: Default::default(),
+            render_pass: Default::default(),
             pipeline_layout: Default::default(),
         }
     }

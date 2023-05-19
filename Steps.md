@@ -54,14 +54,14 @@
 ##### 8.1.2 Create image view create info
 #### 8.2. Create image views
 
-## 9. Shader modules
+## 9. Creating shader modules
 #### 9.1. Write required vertex shader and fragment shader codes in seperate files
 #### 9.2. Compile shader codes
 #### 9.3. Read compiled shader codes (bytecodes) to the program
 #### 9.4. Create shader stage create info for vertex and fragment shaders
 #### 9.5. Destroy shader modules after graphics pipeline has been created
 
-## 10. Fixed functions
+## 10. Configuring fixed functions
 #### 10.1. Create vertex input state create info
 #### 10.2. Create input assembly state create info
 #### 10.3. Create viewport and scissor
@@ -75,3 +75,10 @@
 #### 10.12. Create dynamic state create info
 #### 10.13. Create pipeline layout create info
 #### 10.14. Create pipeline layout
+
+## 11. Creating render passes
+#### 11.1. Create attachment descriptions
+#### 11.2. Create attachment refrences
+#### 11.3. Create subpass descriptions
+#### 11.4. Create render pass create info
+#### 11.5. Create render pass
