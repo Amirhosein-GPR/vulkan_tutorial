@@ -573,11 +573,13 @@ pub unsafe fn create_pipeline(
     let vertex_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)
         .module(vertex_shader_module)
-        .name(CStr::from_bytes_with_nul_unchecked(b"main\0"));
+        .name(CStr::from_bytes_with_nul_unchecked(b"main\0"))
+        .build();
     let fragment_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::FRAGMENT)
         .module(fragment_shader_module)
-        .name(CStr::from_bytes_with_nul_unchecked(b"main\0"));
+        .name(CStr::from_bytes_with_nul_unchecked(b"main\0"))
+        .build();
 
     let vertex_input_state_create_info = vk::PipelineVertexInputStateCreateInfo::builder();
 
@@ -641,10 +643,38 @@ pub unsafe fn create_pipeline(
     let dynamic_state_create_info =
         vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
 
-    // Pipeline layout is used for creating uniform values which are used in shaders and their values can be chaned at drawing times.
+    // Pipeline layout is used for creating uniform values which are used in shaders and their values can be changed at drawing times.
     let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder();
 
     app_data.pipeline_layout = device.create_pipeline_layout(&pipeline_layout_create_info, None)?;
+
+    let shader_stage_create_infos = [
+        vertex_shader_stage_create_info,
+        fragment_shader_stage_create_info,
+    ];
+
+    let pipeline_create_infos = [vk::GraphicsPipelineCreateInfo::builder()
+        .stages(&shader_stage_create_infos)
+        .vertex_input_state(&vertex_input_state_create_info)
+        .input_assembly_state(&input_assembly_state_create_info)
+        .viewport_state(&viewport_state_create_info)
+        .rasterization_state(&rasterization_state_create_info)
+        .multisample_state(&multisample_state_create_info)
+        .depth_stencil_state(&depth_stenci_state_create_info)
+        .color_blend_state(&color_blend_state_create_info)
+        .dynamic_state(&dynamic_state_create_info)
+        .layout(app_data.pipeline_layout)
+        .render_pass(app_data.render_pass)
+        .subpass(0)
+        .base_pipeline_handle(vk::Pipeline::null())
+        .base_pipeline_index(-1)
+        .build()];
+
+    app_data.pipeline = device.create_graphics_pipelines(
+        vk::PipelineCache::null(),
+        &pipeline_create_infos,
+        None,
+    )?[0];
 
     device.destroy_shader_module(vertex_shader_module, None);
     device.destroy_shader_module(fragment_shader_module, None);

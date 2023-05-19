@@ -82,3 +82,8 @@
 #### 11.3. Create subpass descriptions
 #### 11.4. Create render pass create info
 #### 11.5. Create render pass
+
+
+## 12. Creating graphics pipeline
+#### 12.1. Create graphics pipeline create info
+#### 12.2. Create graphics pipeline

@@ -41,6 +41,12 @@ impl From<SuitabilityError> for ApplicationError {
     }
 }
 
+impl From<(Vec<vk::Pipeline>, vk::Result)> for ApplicationError {
+    fn from(value: (Vec<vk::Pipeline>, vk::Result)) -> Self {
+        Self::VulkanError(value.1)
+    }
+}
+
 #[derive(Debug)]
 pub struct SuitabilityError(pub String);
 
