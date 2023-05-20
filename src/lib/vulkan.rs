@@ -700,3 +700,25 @@ unsafe fn create_shader_module(
 
     Ok(device.create_shader_module(&shader_module_create_info, None)?)
 }
+
+pub unsafe fn create_framebuffers(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    app_data.framebuffers = app_data
+        .swapchain_image_views
+        .iter()
+        .map(|i| {
+            let attachments = [*i];
+            let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
+                .render_pass(app_data.render_pass)
+                .attachments(&attachments)
+                .width(app_data.swapchain_extent.width)
+                .height(app_data.swapchain_extent.height)
+                .layers(1);
+            device.create_framebuffer(&framebuffer_create_info, None)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
+}

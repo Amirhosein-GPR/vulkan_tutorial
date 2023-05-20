@@ -16,7 +16,7 @@ impl App {
         // Creating Vulkan entry point. The first thing we need to create before even creating the Vulkan instance.
         let entry = unsafe { Entry::load() }?;
 
-        let mut app_data = AppData::new();
+        let mut app_data = AppData::default();
 
         // Creating Vulkan instance. It is needed for enumerating physical devices and creating logical device.
         let instance = unsafe { vulkan::create_instance(window, &entry, &mut app_data) }?;
@@ -38,6 +38,8 @@ impl App {
 
         unsafe { vulkan::create_pipeline(&device, &mut app_data) }?;
 
+        unsafe { vulkan::create_framebuffers(&device, &mut app_data) }?;
+
         Ok(Self {
             entry,
             instance,
@@ -54,6 +56,11 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
+            self.app_data
+                .framebuffers
+                .iter()
+                .for_each(|f| self.device.destroy_framebuffer(*f, None));
+
             self.device.destroy_pipeline(self.app_data.pipeline, None);
 
             self.device
@@ -85,6 +92,7 @@ impl Drop for App {
     }
 }
 
+#[derive(Default)]
 pub struct AppData {
     pub debug_utils_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -99,24 +107,5 @@ pub struct AppData {
     pub render_pass: vk::RenderPass,
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
-}
-
-impl AppData {
-    fn new() -> Self {
-        Self {
-            debug_utils_messenger: Default::default(),
-            physical_device: Default::default(),
-            graphics_queue: Default::default(),
-            present_queue: Default::default(),
-            surface: Default::default(),
-            swapchain: Default::default(),
-            swapchain_format: Default::default(),
-            swapchain_extent: Default::default(),
-            swapchain_images: Default::default(),
-            swapchain_image_views: Default::default(),
-            render_pass: Default::default(),
-            pipeline_layout: Default::default(),
-            pipeline: Default::default(),
-        }
-    }
+    pub framebuffers: Vec<vk::Framebuffer>,
 }

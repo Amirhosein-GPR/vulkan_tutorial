@@ -87,3 +87,7 @@
 ## 12. Creating graphics pipeline
 #### 12.1. Create graphics pipeline create info
 #### 12.2. Create graphics pipeline
+
+## 13. Creating framebuffers
+#### 13.1. Create framebuffer create infos
+#### 13.2. Create framebuffers
