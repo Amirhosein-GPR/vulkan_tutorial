@@ -40,6 +40,10 @@ impl App {
 
         unsafe { vulkan::create_framebuffers(&device, &mut app_data) }?;
 
+        unsafe { vulkan::create_command_pool(&entry, &instance, &device, &mut app_data) }?;
+
+        unsafe { vulkan::create_command_buffers(&device, &mut app_data) }?;
+
         Ok(Self {
             entry,
             instance,
@@ -56,6 +60,9 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
+            self.device
+                .destroy_command_pool(self.app_data.command_pool, None);
+
             self.app_data
                 .framebuffers
                 .iter()
@@ -108,4 +115,6 @@ pub struct AppData {
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
     pub framebuffers: Vec<vk::Framebuffer>,
+    pub command_pool: vk::CommandPool,
+    pub command_buffers: Vec<vk::CommandBuffer>,
 }

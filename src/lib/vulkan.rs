@@ -639,9 +639,9 @@ pub unsafe fn create_pipeline(
         .blend_constants([0.0, 0.0, 0.0, 0.0]);
 
     // If we want to use dynamic states, we should mention them here.
-    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::LINE_WIDTH];
-    let dynamic_state_create_info =
-        vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
+    // let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::LINE_WIDTH];
+    // let dynamic_state_create_info =
+    //     vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
 
     // Pipeline layout is used for creating uniform values which are used in shaders and their values can be changed at drawing times.
     let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder();
@@ -662,7 +662,7 @@ pub unsafe fn create_pipeline(
         .multisample_state(&multisample_state_create_info)
         .depth_stencil_state(&depth_stenci_state_create_info)
         .color_blend_state(&color_blend_state_create_info)
-        .dynamic_state(&dynamic_state_create_info)
+        // .dynamic_state(&dynamic_state_create_info)
         .layout(app_data.pipeline_layout)
         .render_pass(app_data.render_pass)
         .subpass(0)
@@ -719,6 +719,81 @@ pub unsafe fn create_framebuffers(
             device.create_framebuffer(&framebuffer_create_info, None)
         })
         .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
+}
+
+// Creates command pool which is required to allocate command buffers.
+pub unsafe fn create_command_pool(
+    entry: &Entry,
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let queue_family_indices =
+        QueueFamilyIndices::get(entry, instance, app_data, app_data.physical_device)?;
+    let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+        .flags(vk::CommandPoolCreateFlags::empty())
+        .queue_family_index(queue_family_indices.graphics_queue_family);
+
+    app_data.command_pool = device.create_command_pool(&command_pool_create_info, None)?;
+
+    Ok(())
+}
+
+// Creates command buffers and records some commands into them.
+pub unsafe fn create_command_buffers(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+        .command_pool(app_data.command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(app_data.framebuffers.len() as u32);
+
+    app_data.command_buffers = device.allocate_command_buffers(&command_buffer_allocate_info)?;
+
+    // Only relevant for secondary command buffers.
+    let command_buffer_inheritance_info = vk::CommandBufferInheritanceInfo::builder();
+    let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder()
+        .flags(vk::CommandBufferUsageFlags::empty())
+        .inheritance_info(&command_buffer_inheritance_info);
+
+    let render_area = vk::Rect2D::builder()
+        .offset(vk::Offset2D::default())
+        .extent(app_data.swapchain_extent)
+        .build();
+
+    let clear_color_values = [vk::ClearValue {
+        color: vk::ClearColorValue {
+            float32: [0.0, 0.0, 0.0, 1.0],
+        },
+    }];
+
+    for (i, command_buffer) in app_data.command_buffers.iter().enumerate() {
+        device.begin_command_buffer(*command_buffer, &command_buffer_begin_info)?;
+
+        let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
+            .render_pass(app_data.render_pass)
+            .framebuffer(app_data.framebuffers[i])
+            .render_area(render_area)
+            .clear_values(&clear_color_values);
+
+        device.cmd_begin_render_pass(
+            *command_buffer,
+            &render_pass_begin_info,
+            vk::SubpassContents::INLINE,
+        );
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            app_data.pipeline,
+        );
+        device.cmd_draw(*command_buffer, 3, 1, 0, 0);
+        device.cmd_end_render_pass(*command_buffer);
+
+        device.end_command_buffer(*command_buffer)?;
+    }
 
     Ok(())
 }
