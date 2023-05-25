@@ -5,6 +5,7 @@
     clippy::unnecessary_wraps
 )]
 
+use ash::extensions;
 use pretty_env_logger;
 use vulkan_tutorial::app::App;
 use vulkan_tutorial::error::ApplicationError;
@@ -41,6 +42,9 @@ fn main() -> Result<(), ApplicationError> {
             } => {
                 destroying = true;
                 *control_flow = ControlFlow::Exit;
+                unsafe {
+                    app.device.device_wait_idle().unwrap();
+                }
             }
             _ => {}
         }

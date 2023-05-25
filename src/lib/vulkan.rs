@@ -13,6 +13,7 @@ pub const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 const VALIDATION_LAYER_NAME: &CStr =
     unsafe { &CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
 const DEVICE_EXTENSIONS_NAMES: &[&CStr] = &[extensions::khr::Swapchain::name()];
+pub const MAX_FRAMES_IN_FLIGHT: u8 = 2;
 
 struct QueueFamilyIndices {
     graphics_queue_family: u32,
@@ -550,9 +551,19 @@ pub unsafe fn create_render_pass(
         .color_attachments(&color_attachment_refrences)
         .build()];
 
+    let subpass_dependencies = [vk::SubpassDependency::builder()
+        .src_subpass(vk::SUBPASS_EXTERNAL)
+        .dst_subpass(0)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+        .build()];
+
     let render_pass_create_info = vk::RenderPassCreateInfo::builder()
         .attachments(&color_attachment_descriptions)
-        .subpasses(&subpass_descriptions);
+        .subpasses(&subpass_descriptions)
+        .dependencies(&subpass_dependencies);
 
     app_data.render_pass = device.create_render_pass(&render_pass_create_info, None)?;
 
@@ -793,6 +804,33 @@ pub unsafe fn create_command_buffers(
         device.cmd_end_render_pass(*command_buffer);
 
         device.end_command_buffer(*command_buffer)?;
+    }
+
+    Ok(())
+}
+
+pub unsafe fn create_sync_objects(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let semaphore_create_info = vk::SemaphoreCreateInfo::builder();
+    let fence_create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+
+    for _ in 0..MAX_FRAMES_IN_FLIGHT {
+        app_data
+            .image_available_semaphores
+            .push(device.create_semaphore(&semaphore_create_info, None)?);
+        app_data
+            .render_finished_semaphores
+            .push(device.create_semaphore(&semaphore_create_info, None)?);
+        app_data
+            .in_flight_frame_fences
+            .push(device.create_fence(&fence_create_info, None)?);
+        app_data.in_flight_image_fences = app_data
+            .swapchain_images
+            .iter()
+            .map(|_| vk::Fence::null())
+            .collect();
     }
 
     Ok(())

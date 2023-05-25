@@ -105,3 +105,15 @@
 #### 14.10. Record draw command
 #### 14.11. Record end render pass command
 #### 14.11. End command buffer
+
+## 15. Rendering and presentation
+#### 15.1. Create subpass dependencies in render pass creation code
+#### 15.2. Create image available and render finsihed semaphores
+#### 15.3. Create inflight frame and image fences
+#### 15.4. Wait for inflight frame fence
+#### 15.5. Acquire swapchain image index
+#### 15.6. Wait for inflight image fence
+#### 15.7. Create submit info
+#### 15.8. Reset inflight frame fence
+#### 15.9. Submit command buffer related to aquired image index, on queue
+#### 15.10. Present image by index on present queue
