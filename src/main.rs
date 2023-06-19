@@ -30,11 +30,23 @@ fn main() -> Result<(), ApplicationError> {
 
     // Running event loop and managing the needed states.
     let mut destroying = false;
+    let mut minimized = false;
     event_loop.run(move |event, _event_loop_window_target, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
-            Event::MainEventsCleared if !destroying => {
+            Event::MainEventsCleared if !destroying && !minimized => {
                 app.render(&window).expect("Error: Rendering failed.")
+            }
+            Event::WindowEvent {
+                event: WindowEvent::Resized(size),
+                ..
+            } => {
+                if size.width == 0 || size.height == 0 {
+                    minimized = true;
+                } else {
+                    minimized = false;
+                    app.resized = true;
+                }
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,

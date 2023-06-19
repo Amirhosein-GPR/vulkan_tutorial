@@ -826,12 +826,13 @@ pub unsafe fn create_sync_objects(
         app_data
             .in_flight_frame_fences
             .push(device.create_fence(&fence_create_info, None)?);
-        app_data.in_flight_image_fences = app_data
-            .swapchain_images
-            .iter()
-            .map(|_| vk::Fence::null())
-            .collect();
     }
+
+    app_data.in_flight_image_fences = app_data
+        .swapchain_images
+        .iter()
+        .map(|_| vk::Fence::null())
+        .collect();
 
     Ok(())
 }

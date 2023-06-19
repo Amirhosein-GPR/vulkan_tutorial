@@ -117,3 +117,5 @@
 #### 15.8. Reset inflight frame fence
 #### 15.9. Submit command buffer related to aquired image index, on queue
 #### 15.10. Present image by index on present queue
+
+## This file may not get updated anymore for future chapters.

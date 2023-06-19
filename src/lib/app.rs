@@ -11,6 +11,7 @@ pub struct App {
     app_data: AppData,
     pub device: Device,
     frame: u8,
+    pub resized: bool,
 }
 
 impl App {
@@ -56,6 +57,7 @@ impl App {
             app_data,
             device,
             frame: 0,
+            resized: false,
         })
     }
 
@@ -70,7 +72,7 @@ impl App {
 
         let swapchain_loader = extensions::khr::Swapchain::new(&self.instance, &self.device);
 
-        let image_index = unsafe {
+        let result = unsafe {
             swapchain_loader.acquire_next_image(
                 self.app_data.swapchain,
                 // Using u64::MAX value disables the timeout.
@@ -78,8 +80,13 @@ impl App {
                 self.app_data.image_available_semaphores[self.frame as usize],
                 vk::Fence::null(),
             )
-        }?
-        .0;
+        };
+
+        let image_index = match result {
+            Ok((image_index, _)) => image_index,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
+            Err(error) => return Err(error.into()),
+        };
 
         if self.app_data.in_flight_image_fences[image_index as usize] != vk::Fence::null() {
             unsafe {
@@ -125,17 +132,80 @@ impl App {
             .swapchains(&swapchains)
             .image_indices(&image_indices);
 
-        unsafe { swapchain_loader.queue_present(self.app_data.graphics_queue, &present_info) }?;
+        let result =
+            unsafe { swapchain_loader.queue_present(self.app_data.graphics_queue, &present_info) };
+
+        let changed = result == Ok(true) || result == Err(vk::Result::ERROR_OUT_OF_DATE_KHR);
+
+        if self.resized || changed {
+            self.resized = false;
+            self.recreate_swapchain(window)?;
+        } else if let Err(e) = result {
+            return Err(e.into());
+        }
 
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
         Ok(())
+    }
+
+    pub fn recreate_swapchain(&mut self, window: &Window) -> Result<(), ApplicationError> {
+        unsafe {
+            self.device.device_wait_idle()?;
+            self.destroy_swapchain();
+
+            vulkan::create_swapchain(
+                &self.entry,
+                window,
+                &self.instance,
+                &self.device,
+                &mut self.app_data,
+            )?;
+            vulkan::create_swapchain_image_views(&self.device, &mut self.app_data)?;
+            vulkan::create_render_pass(&self.instance, &self.device, &mut self.app_data)?;
+            vulkan::create_pipeline(&self.device, &mut self.app_data)?;
+            vulkan::create_framebuffers(&self.device, &mut self.app_data)?;
+            vulkan::create_command_buffers(&self.device, &mut self.app_data)?;
+            self.app_data
+                .in_flight_image_fences
+                .resize(self.app_data.swapchain_images.len(), vk::Fence::null());
+        }
+
+        Ok(())
+    }
+
+    unsafe fn destroy_swapchain(&mut self) {
+        self.app_data
+            .framebuffers
+            .iter()
+            .for_each(|f| self.device.destroy_framebuffer(*f, None));
+
+        self.device
+            .free_command_buffers(self.app_data.command_pool, &self.app_data.command_buffers);
+
+        self.device.destroy_pipeline(self.app_data.pipeline, None);
+
+        self.device
+            .destroy_pipeline_layout(self.app_data.pipeline_layout, None);
+
+        self.device
+            .destroy_render_pass(self.app_data.render_pass, None);
+
+        self.app_data
+            .swapchain_image_views
+            .iter()
+            .for_each(|v| self.device.destroy_image_view(*v, None));
+
+        extensions::khr::Swapchain::new(&self.instance, &self.device)
+            .destroy_swapchain(self.app_data.swapchain, None);
     }
 }
 
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
+            self.destroy_swapchain();
+
             self.app_data
                 .image_available_semaphores
                 .iter()
@@ -151,27 +221,6 @@ impl Drop for App {
 
             self.device
                 .destroy_command_pool(self.app_data.command_pool, None);
-
-            self.app_data
-                .framebuffers
-                .iter()
-                .for_each(|f| self.device.destroy_framebuffer(*f, None));
-
-            self.device.destroy_pipeline(self.app_data.pipeline, None);
-
-            self.device
-                .destroy_render_pass(self.app_data.render_pass, None);
-
-            self.device
-                .destroy_pipeline_layout(self.app_data.pipeline_layout, None);
-
-            self.app_data
-                .swapchain_image_views
-                .iter()
-                .for_each(|v| self.device.destroy_image_view(*v, None));
-
-            extensions::khr::Swapchain::new(&self.instance, &self.device)
-                .destroy_swapchain(self.app_data.swapchain, None);
 
             extensions::khr::Surface::new(&self.entry, &self.instance)
                 .destroy_surface(self.app_data.surface, None);
