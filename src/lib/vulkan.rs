@@ -5,7 +5,7 @@ use log::{debug, error, info, trace, warn};
 use nalgebra::{Vector2, Vector3};
 use std::collections::HashSet;
 use std::ffi::{c_void, CStr, CString};
-use std::mem;
+use std::{mem, ptr};
 use winit::platform::x11::WindowExtX11;
 use winit::window::Window;
 
@@ -16,6 +16,12 @@ const VALIDATION_LAYER_NAME: &CStr =
     unsafe { &CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
 const DEVICE_EXTENSIONS_NAMES: &[&CStr] = &[extensions::khr::Swapchain::name()];
 pub const MAX_FRAMES_IN_FLIGHT: u8 = 2;
+
+// static VERTECIES: [Vertex; 3] = [
+//     Vertex::new(Vector2::new(0.0, -0.5), Vector3::new(1.0, 0.0, 0.0)),
+//     Vertex::new(Vector2::new(0.5, 0.5), Vector3::new(0.0, 1.0, 0.0)),
+//     Vertex::new(Vector2::new(-0.5, 0.5), Vector3::new(0.0, 0.0, 1.0)),
+// ];
 
 struct QueueFamilyIndices {
     graphics_queue_family: u32,
@@ -96,13 +102,13 @@ impl SwapchainSupport {
 }
 
 #[repr(C)]
-struct Vertex {
+pub struct Vertex {
     pos: Vector2<f32>,
     color: Vector3<f32>,
 }
 
 impl Vertex {
-    fn new(pos: Vector2<f32>, color: Vector3<f32>) -> Self {
+    pub fn new(pos: Vector2<f32>, color: Vector3<f32>) -> Self {
         Self { pos, color }
     }
 
@@ -799,6 +805,7 @@ pub unsafe fn create_command_pool(
 pub unsafe fn create_command_buffers(
     device: &Device,
     app_data: &mut AppData,
+    vertecies: &[Vertex],
 ) -> Result<(), ApplicationError> {
     let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
         .command_pool(app_data.command_pool)
@@ -843,7 +850,8 @@ pub unsafe fn create_command_buffers(
             vk::PipelineBindPoint::GRAPHICS,
             app_data.pipeline,
         );
-        device.cmd_draw(*command_buffer, 3, 1, 0, 0);
+        device.cmd_bind_vertex_buffers(*command_buffer, 0, &[app_data.vertex_buffer], &[0]);
+        device.cmd_draw(*command_buffer, vertecies.len() as u32, 1, 0, 0);
         device.cmd_end_render_pass(*command_buffer);
 
         device.end_command_buffer(*command_buffer)?;
@@ -878,4 +886,66 @@ pub unsafe fn create_sync_objects(
         .collect();
 
     Ok(())
+}
+
+pub unsafe fn create_vertex_buffer(
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+    vertecies: &[Vertex],
+) -> Result<(), ApplicationError> {
+    let buffer_create_info = vk::BufferCreateInfo::builder()
+        .size((mem::size_of::<Vertex>() * vertecies.len()) as u64)
+        .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    app_data.vertex_buffer = device.create_buffer(&buffer_create_info, None)?;
+
+    let memory_requirements = device.get_buffer_memory_requirements(app_data.vertex_buffer);
+
+    let memory_allocate_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(memory_requirements.size)
+        .memory_type_index(get_memory_type_index(
+            instance,
+            app_data,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            memory_requirements,
+        )?);
+
+    app_data.vertex_buffer_memory = device.allocate_memory(&memory_allocate_info, None)?;
+
+    device.bind_buffer_memory(app_data.vertex_buffer, app_data.vertex_buffer_memory, 0)?;
+
+    let memory = device.map_memory(
+        app_data.vertex_buffer_memory,
+        0,
+        buffer_create_info.size,
+        vk::MemoryMapFlags::empty(),
+    )?;
+
+    ptr::copy_nonoverlapping(vertecies.as_ptr(), memory.cast(), vertecies.len());
+
+    device.unmap_memory(app_data.vertex_buffer_memory);
+
+    Ok(())
+}
+
+unsafe fn get_memory_type_index(
+    instance: &Instance,
+    app_data: &mut AppData,
+    memory_property_flags: vk::MemoryPropertyFlags,
+    memory_requirements: vk::MemoryRequirements,
+) -> Result<u32, ApplicationError> {
+    let memory_properties =
+        instance.get_physical_device_memory_properties(app_data.physical_device);
+
+    (0..memory_properties.memory_type_count)
+        .find(|i| {
+            let suitable = memory_requirements.memory_type_bits & (1 << i) != 0;
+            let memory_type = memory_properties.memory_types[*i as usize];
+            suitable && memory_type.property_flags.contains(memory_property_flags)
+        })
+        .ok_or(ApplicationError::EngineError(
+            "Failed to find suitable memory type.".to_string(),
+        ))
 }

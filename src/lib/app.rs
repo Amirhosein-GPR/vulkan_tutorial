@@ -1,8 +1,10 @@
 use crate::error::ApplicationError;
 use crate::vulkan;
+use crate::vulkan::Vertex;
 use crate::vulkan::MAX_FRAMES_IN_FLIGHT;
 use crate::vulkan::VALIDATION_ENABLED;
 use ash::{extensions, vk, Device, Entry, Instance};
+use nalgebra::{Vector2, Vector3};
 use winit::window::Window;
 
 pub struct App {
@@ -15,7 +17,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(window: &Window) -> Result<Self, ApplicationError> {
+    pub fn new(window: &Window, vertecies: &[Vertex]) -> Result<Self, ApplicationError> {
         // Creating Vulkan entry point. The first thing we need to create before even creating the Vulkan instance.
         let entry = unsafe { Entry::load() }?;
 
@@ -46,7 +48,9 @@ impl App {
 
             vulkan::create_command_pool(&entry, &instance, &device, &mut app_data)?;
 
-            vulkan::create_command_buffers(&device, &mut app_data)?;
+            vulkan::create_vertex_buffer(&instance, &device, &mut app_data, &vertecies)?;
+
+            vulkan::create_command_buffers(&device, &mut app_data, &vertecies)?;
 
             vulkan::create_sync_objects(&device, &mut app_data)?;
         }
@@ -61,7 +65,11 @@ impl App {
         })
     }
 
-    pub fn render(&mut self, window: &Window) -> Result<(), ApplicationError> {
+    pub fn render(
+        &mut self,
+        window: &Window,
+        vertecies: &[Vertex],
+    ) -> Result<(), ApplicationError> {
         unsafe {
             self.device.wait_for_fences(
                 &[self.app_data.in_flight_frame_fences[self.frame as usize]],
@@ -84,7 +92,9 @@ impl App {
 
         let image_index = match result {
             Ok((image_index, _)) => image_index,
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                return self.recreate_swapchain(window, vertecies)
+            }
             Err(error) => return Err(error.into()),
         };
 
@@ -139,7 +149,7 @@ impl App {
 
         if self.resized || changed {
             self.resized = false;
-            self.recreate_swapchain(window)?;
+            self.recreate_swapchain(window, vertecies)?;
         } else if let Err(e) = result {
             return Err(e.into());
         }
@@ -149,7 +159,11 @@ impl App {
         Ok(())
     }
 
-    pub fn recreate_swapchain(&mut self, window: &Window) -> Result<(), ApplicationError> {
+    pub fn recreate_swapchain(
+        &mut self,
+        window: &Window,
+        vertecies: &[Vertex],
+    ) -> Result<(), ApplicationError> {
         unsafe {
             self.device.device_wait_idle()?;
             self.destroy_swapchain();
@@ -165,7 +179,7 @@ impl App {
             vulkan::create_render_pass(&self.instance, &self.device, &mut self.app_data)?;
             vulkan::create_pipeline(&self.device, &mut self.app_data)?;
             vulkan::create_framebuffers(&self.device, &mut self.app_data)?;
-            vulkan::create_command_buffers(&self.device, &mut self.app_data)?;
+            vulkan::create_command_buffers(&self.device, &mut self.app_data, vertecies)?;
             self.app_data
                 .in_flight_image_fences
                 .resize(self.app_data.swapchain_images.len(), vk::Fence::null());
@@ -205,6 +219,12 @@ impl Drop for App {
     fn drop(&mut self) {
         unsafe {
             self.destroy_swapchain();
+
+            self.device
+                .destroy_buffer(self.app_data.vertex_buffer, None);
+
+            self.device
+                .free_memory(self.app_data.vertex_buffer_memory, None);
 
             self.app_data
                 .image_available_semaphores
@@ -259,4 +279,6 @@ pub struct AppData {
     pub render_finished_semaphores: Vec<vk::Semaphore>,
     pub in_flight_frame_fences: Vec<vk::Fence>,
     pub in_flight_image_fences: Vec<vk::Fence>,
+    pub vertex_buffer: vk::Buffer,
+    pub vertex_buffer_memory: vk::DeviceMemory,
 }
