@@ -2,8 +2,10 @@ use crate::app::AppData;
 use crate::error::{ApplicationError, SuitabilityError};
 use ash::{extensions, util, vk, Device, Entry, Instance};
 use log::{debug, error, info, trace, warn};
+use nalgebra::{Vector2, Vector3};
 use std::collections::HashSet;
 use std::ffi::{c_void, CStr, CString};
+use std::mem;
 use winit::platform::x11::WindowExtX11;
 use winit::window::Window;
 
@@ -90,6 +92,43 @@ impl SwapchainSupport {
             present_modes: surface_loader
                 .get_physical_device_surface_present_modes(physical_device, app_data.surface)?,
         })
+    }
+}
+
+#[repr(C)]
+struct Vertex {
+    pos: Vector2<f32>,
+    color: Vector3<f32>,
+}
+
+impl Vertex {
+    fn new(pos: Vector2<f32>, color: Vector3<f32>) -> Self {
+        Self { pos, color }
+    }
+
+    fn binding_description() -> vk::VertexInputBindingDescription {
+        vk::VertexInputBindingDescription::builder()
+            .binding(0)
+            .stride(mem::size_of::<Vertex>() as u32)
+            .input_rate(vk::VertexInputRate::VERTEX)
+            .build()
+    }
+
+    fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 2] {
+        let pos = vk::VertexInputAttributeDescription::builder()
+            .location(0)
+            .binding(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(0)
+            .build();
+        let color = vk::VertexInputAttributeDescription::builder()
+            .location(1)
+            .binding(0)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(mem::size_of::<Vector2<f32>>() as u32)
+            .build();
+
+        [pos, color]
     }
 }
 
@@ -592,7 +631,11 @@ pub unsafe fn create_pipeline(
         .name(CStr::from_bytes_with_nul_unchecked(b"main\0"))
         .build();
 
-    let vertex_input_state_create_info = vk::PipelineVertexInputStateCreateInfo::builder();
+    let vertex_binding_descriptions = [Vertex::binding_description()];
+    let vertex_attribute_descriptions = Vertex::attribute_descriptions();
+    let vertex_input_state_create_info = vk::PipelineVertexInputStateCreateInfo::builder()
+        .vertex_binding_descriptions(&vertex_binding_descriptions)
+        .vertex_attribute_descriptions(&vertex_attribute_descriptions);
 
     let input_assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
