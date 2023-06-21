@@ -1,7 +1,7 @@
 use crate::app::AppData;
 use crate::error::{ApplicationError, SuitabilityError};
-use ash::{extensions, util, vk, Device, Entry, Instance};
-use log::{debug, error, info, trace, warn};
+use ash::{extensions, vk, Device, Entry, Instance};
+use log::{error, info, trace, warn};
 use nalgebra::{Vector2, Vector3};
 use std::collections::HashSet;
 use std::ffi::{c_void, CStr, CString};
@@ -805,7 +805,6 @@ pub unsafe fn create_command_pool(
 pub unsafe fn create_command_buffers(
     device: &Device,
     app_data: &mut AppData,
-    vertecies: &[Vertex],
 ) -> Result<(), ApplicationError> {
     let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
         .command_pool(app_data.command_pool)
@@ -851,7 +850,13 @@ pub unsafe fn create_command_buffers(
             app_data.pipeline,
         );
         device.cmd_bind_vertex_buffers(*command_buffer, 0, &[app_data.vertex_buffer], &[0]);
-        device.cmd_draw(*command_buffer, vertecies.len() as u32, 1, 0, 0);
+        device.cmd_bind_index_buffer(
+            *command_buffer,
+            app_data.index_buffer,
+            0,
+            vk::IndexType::UINT16,
+        );
+        device.cmd_draw_indexed(*command_buffer, app_data.indices.len() as u32, 1, 0, 0, 0);
         device.cmd_end_render_pass(*command_buffer);
 
         device.end_command_buffer(*command_buffer)?;
@@ -888,48 +893,6 @@ pub unsafe fn create_sync_objects(
     Ok(())
 }
 
-pub unsafe fn create_vertex_buffer(
-    instance: &Instance,
-    device: &Device,
-    app_data: &mut AppData,
-    vertecies: &[Vertex],
-) -> Result<(), ApplicationError> {
-    let buffer_create_info = vk::BufferCreateInfo::builder()
-        .size((mem::size_of::<Vertex>() * vertecies.len()) as u64)
-        .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE);
-
-    app_data.vertex_buffer = device.create_buffer(&buffer_create_info, None)?;
-
-    let memory_requirements = device.get_buffer_memory_requirements(app_data.vertex_buffer);
-
-    let memory_allocate_info = vk::MemoryAllocateInfo::builder()
-        .allocation_size(memory_requirements.size)
-        .memory_type_index(get_memory_type_index(
-            instance,
-            app_data,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            memory_requirements,
-        )?);
-
-    app_data.vertex_buffer_memory = device.allocate_memory(&memory_allocate_info, None)?;
-
-    device.bind_buffer_memory(app_data.vertex_buffer, app_data.vertex_buffer_memory, 0)?;
-
-    let memory = device.map_memory(
-        app_data.vertex_buffer_memory,
-        0,
-        buffer_create_info.size,
-        vk::MemoryMapFlags::empty(),
-    )?;
-
-    ptr::copy_nonoverlapping(vertecies.as_ptr(), memory.cast(), vertecies.len());
-
-    device.unmap_memory(app_data.vertex_buffer_memory);
-
-    Ok(())
-}
-
 unsafe fn get_memory_type_index(
     instance: &Instance,
     app_data: &mut AppData,
@@ -948,4 +911,173 @@ unsafe fn get_memory_type_index(
         .ok_or(ApplicationError::EngineError(
             "Failed to find suitable memory type.".to_string(),
         ))
+}
+
+unsafe fn create_buffer(
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+    size: vk::DeviceSize,
+    buffer_usage_flags: vk::BufferUsageFlags,
+    memory_property_flags: vk::MemoryPropertyFlags,
+) -> Result<(vk::Buffer, vk::DeviceMemory), ApplicationError> {
+    let buffer_create_info = vk::BufferCreateInfo::builder()
+        .size(size)
+        .usage(buffer_usage_flags)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    let buffer = device.create_buffer(&buffer_create_info, None)?;
+
+    let memory_requirements = device.get_buffer_memory_requirements(buffer);
+
+    let memory_allocate_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(memory_requirements.size)
+        .memory_type_index(get_memory_type_index(
+            instance,
+            app_data,
+            memory_property_flags,
+            memory_requirements,
+        )?);
+
+    let buffer_memory = device.allocate_memory(&memory_allocate_info, None)?;
+
+    device.bind_buffer_memory(buffer, buffer_memory, 0)?;
+
+    Ok((buffer, buffer_memory))
+}
+
+unsafe fn copy_buffer(
+    device: &Device,
+    app_data: &mut AppData,
+    source_buffer: vk::Buffer,
+    destination_buffer: vk::Buffer,
+    size: vk::DeviceSize,
+) -> Result<(), ApplicationError> {
+    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+        .command_pool(app_data.command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(1);
+
+    let command_buffer = device.allocate_command_buffers(&command_buffer_allocate_info)?[0];
+
+    let command_buffer_begin_info =
+        vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+    device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?;
+
+    let buffer_copy_regions = vk::BufferCopy::builder().size(size).build();
+
+    device.cmd_copy_buffer(
+        command_buffer,
+        source_buffer,
+        destination_buffer,
+        &[buffer_copy_regions],
+    );
+
+    device.end_command_buffer(command_buffer)?;
+
+    let command_buffers = [command_buffer];
+    let submit_infos = [vk::SubmitInfo::builder()
+        .command_buffers(&command_buffers)
+        .build()];
+
+    device.queue_submit(app_data.graphics_queue, &submit_infos, vk::Fence::null())?;
+
+    device.queue_wait_idle(app_data.graphics_queue)?;
+
+    device.free_command_buffers(app_data.command_pool, &command_buffers);
+
+    Ok(())
+}
+
+pub unsafe fn create_vertex_buffer(
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let size = (mem::size_of::<Vertex>() * app_data.vertecies.len()) as u64;
+
+    let (staging_buffer, staging_buffer_memory) = create_buffer(
+        instance,
+        device,
+        app_data,
+        size,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    let memory = device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())?;
+
+    ptr::copy_nonoverlapping(
+        app_data.vertecies.as_ptr(),
+        memory.cast(),
+        app_data.vertecies.len(),
+    );
+
+    device.unmap_memory(staging_buffer_memory);
+
+    let (vertex_buffer, vertex_buffer_memory) = create_buffer(
+        instance,
+        device,
+        app_data,
+        size,
+        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    )?;
+
+    app_data.vertex_buffer = vertex_buffer;
+    app_data.vertex_buffer_memory = vertex_buffer_memory;
+
+    copy_buffer(device, app_data, staging_buffer, vertex_buffer, size)?;
+
+    device.destroy_buffer(staging_buffer, None);
+    device.free_memory(staging_buffer_memory, None);
+
+    Ok(())
+}
+
+pub unsafe fn create_index_buffer(
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let size = (mem::size_of::<u16>() * app_data.indices.len()) as u64;
+
+    let (staging_buffer, staging_buffer_memory) = create_buffer(
+        instance,
+        device,
+        app_data,
+        size,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    let memory = device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())?;
+
+    ptr::copy_nonoverlapping(
+        app_data.indices.as_ptr(),
+        memory.cast(),
+        app_data.indices.len(),
+    );
+
+    device.unmap_memory(staging_buffer_memory);
+
+    let (index_buffer, index_buffer_memory) = create_buffer(
+        instance,
+        device,
+        app_data,
+        size,
+        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    )?;
+
+    app_data.index_buffer = index_buffer;
+    app_data.index_buffer_memory = index_buffer_memory;
+
+    copy_buffer(device, app_data, staging_buffer, index_buffer, size)?;
+
+    device.destroy_buffer(staging_buffer, None);
+    device.free_memory(staging_buffer_memory, None);
+
+    Ok(())
 }

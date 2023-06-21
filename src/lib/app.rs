@@ -17,11 +17,21 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(window: &Window, vertecies: &[Vertex]) -> Result<Self, ApplicationError> {
-        // Creating Vulkan entry point. The first thing we need to create before even creating the Vulkan instance.
-        let entry = unsafe { Entry::load() }?;
+    pub fn new(window: &Window) -> Result<Self, ApplicationError> {
+        let indices: Vec<u16> = vec![0, 1, 2, 2, 3, 0];
+        let vertecies = vec![
+            Vertex::new(Vector2::new(-0.5, -0.5), Vector3::new(1.0, 0.0, 0.0)),
+            Vertex::new(Vector2::new(0.5, -0.5), Vector3::new(0.0, 1.0, 0.0)),
+            Vertex::new(Vector2::new(0.5, 0.5), Vector3::new(0.0, 0.0, 1.0)),
+            Vertex::new(Vector2::new(-0.5, 0.5), Vector3::new(1.0, 1.0, 1.0)),
+        ];
 
         let mut app_data = AppData::default();
+        app_data.vertecies = vertecies;
+        app_data.indices = indices;
+
+        // Creating Vulkan entry point. The first thing we need to create before even creating the Vulkan instance.
+        let entry = unsafe { Entry::load() }?;
 
         // Creating Vulkan instance. It is needed for enumerating physical devices and creating logical device.
         let instance = unsafe { vulkan::create_instance(window, &entry, &mut app_data) }?;
@@ -48,9 +58,11 @@ impl App {
 
             vulkan::create_command_pool(&entry, &instance, &device, &mut app_data)?;
 
-            vulkan::create_vertex_buffer(&instance, &device, &mut app_data, &vertecies)?;
+            vulkan::create_vertex_buffer(&instance, &device, &mut app_data)?;
 
-            vulkan::create_command_buffers(&device, &mut app_data, &vertecies)?;
+            vulkan::create_index_buffer(&instance, &device, &mut app_data)?;
+
+            vulkan::create_command_buffers(&device, &mut app_data)?;
 
             vulkan::create_sync_objects(&device, &mut app_data)?;
         }
@@ -65,11 +77,7 @@ impl App {
         })
     }
 
-    pub fn render(
-        &mut self,
-        window: &Window,
-        vertecies: &[Vertex],
-    ) -> Result<(), ApplicationError> {
+    pub fn render(&mut self, window: &Window) -> Result<(), ApplicationError> {
         unsafe {
             self.device.wait_for_fences(
                 &[self.app_data.in_flight_frame_fences[self.frame as usize]],
@@ -92,9 +100,7 @@ impl App {
 
         let image_index = match result {
             Ok((image_index, _)) => image_index,
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                return self.recreate_swapchain(window, vertecies)
-            }
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
             Err(error) => return Err(error.into()),
         };
 
@@ -149,7 +155,7 @@ impl App {
 
         if self.resized || changed {
             self.resized = false;
-            self.recreate_swapchain(window, vertecies)?;
+            self.recreate_swapchain(window)?;
         } else if let Err(e) = result {
             return Err(e.into());
         }
@@ -159,11 +165,7 @@ impl App {
         Ok(())
     }
 
-    pub fn recreate_swapchain(
-        &mut self,
-        window: &Window,
-        vertecies: &[Vertex],
-    ) -> Result<(), ApplicationError> {
+    pub fn recreate_swapchain(&mut self, window: &Window) -> Result<(), ApplicationError> {
         unsafe {
             self.device.device_wait_idle()?;
             self.destroy_swapchain();
@@ -179,7 +181,7 @@ impl App {
             vulkan::create_render_pass(&self.instance, &self.device, &mut self.app_data)?;
             vulkan::create_pipeline(&self.device, &mut self.app_data)?;
             vulkan::create_framebuffers(&self.device, &mut self.app_data)?;
-            vulkan::create_command_buffers(&self.device, &mut self.app_data, vertecies)?;
+            vulkan::create_command_buffers(&self.device, &mut self.app_data)?;
             self.app_data
                 .in_flight_image_fences
                 .resize(self.app_data.swapchain_images.len(), vk::Fence::null());
@@ -225,6 +227,11 @@ impl Drop for App {
 
             self.device
                 .free_memory(self.app_data.vertex_buffer_memory, None);
+
+            self.device.destroy_buffer(self.app_data.index_buffer, None);
+
+            self.device
+                .free_memory(self.app_data.index_buffer_memory, None);
 
             self.app_data
                 .image_available_semaphores
@@ -279,6 +286,10 @@ pub struct AppData {
     pub render_finished_semaphores: Vec<vk::Semaphore>,
     pub in_flight_frame_fences: Vec<vk::Fence>,
     pub in_flight_image_fences: Vec<vk::Fence>,
+    pub vertecies: Vec<Vertex>,
+    pub indices: Vec<u16>,
     pub vertex_buffer: vk::Buffer,
     pub vertex_buffer_memory: vk::DeviceMemory,
+    pub index_buffer: vk::Buffer,
+    pub index_buffer_memory: vk::DeviceMemory,
 }

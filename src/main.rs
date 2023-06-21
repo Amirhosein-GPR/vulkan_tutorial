@@ -5,12 +5,9 @@
     clippy::unnecessary_wraps
 )]
 
-use ash::extensions;
-use nalgebra::{Vector2, Vector3};
 use pretty_env_logger;
 use vulkan_tutorial::app::App;
 use vulkan_tutorial::error::ApplicationError;
-use vulkan_tutorial::vulkan::Vertex;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -27,14 +24,8 @@ fn main() -> Result<(), ApplicationError> {
         .with_inner_size(LogicalSize::new(1024, 768))
         .build(&event_loop)?;
 
-    let vertecies = vec![
-        Vertex::new(Vector2::new(0.0, -0.5), Vector3::new(1.0, 1.0, 1.0)),
-        Vertex::new(Vector2::new(0.5, 0.5), Vector3::new(0.0, 1.0, 0.0)),
-        Vertex::new(Vector2::new(-0.5, 0.5), Vector3::new(0.0, 0.0, 1.0)),
-    ];
-
     // Initilaizeing app struct which holds main logic of this application.
-    let mut app = App::new(&window, &vertecies)?;
+    let mut app = App::new(&window)?;
 
     // Running event loop and managing the needed states.
     let mut destroying = false;
@@ -42,9 +33,9 @@ fn main() -> Result<(), ApplicationError> {
     event_loop.run(move |event, _event_loop_window_target, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
-            Event::MainEventsCleared if !destroying && !minimized => app
-                .render(&window, &vertecies)
-                .expect("Error: Rendering failed."),
+            Event::MainEventsCleared if !destroying && !minimized => {
+                app.render(&window).expect("Error: Rendering failed.")
+            }
             Event::WindowEvent {
                 event: WindowEvent::Resized(size),
                 ..
