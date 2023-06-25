@@ -1,6 +1,6 @@
 #version 450
 
-layout(binding = 0) UniformBufferObject {
+layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 project;

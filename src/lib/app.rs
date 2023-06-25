@@ -68,6 +68,10 @@ impl App {
 
             vulkan::create_uniform_buffers(&instance, &device, &mut app_data)?;
 
+            vulkan::create_descriptor_pool(&device, &mut app_data)?;
+
+            vulkan::create_descriptor_sets(&device, &mut app_data)?;
+
             vulkan::create_command_buffers(&device, &mut app_data)?;
 
             vulkan::create_sync_objects(&device, &mut app_data)?;
@@ -193,6 +197,8 @@ impl App {
             vulkan::create_pipeline(&self.device, &mut self.app_data)?;
             vulkan::create_framebuffers(&self.device, &mut self.app_data)?;
             vulkan::create_uniform_buffers(&self.instance, &self.device, &mut self.app_data)?;
+            vulkan::create_descriptor_pool(&self.device, &mut self.app_data)?;
+            vulkan::create_descriptor_sets(&self.device, &mut self.app_data)?;
             vulkan::create_command_buffers(&self.device, &mut self.app_data)?;
             self.app_data
                 .in_flight_image_fences
@@ -203,6 +209,9 @@ impl App {
     }
 
     unsafe fn destroy_swapchain(&mut self) {
+        self.device
+            .destroy_descriptor_pool(self.app_data.descriptor_pool, None);
+
         self.app_data
             .uniform_buffers
             .iter()
@@ -249,13 +258,15 @@ impl App {
             &Vector3::<f32>::new(0.0, 0.0, 1.0),
         );
 
-        let project = Matrix4::new_perspective(
+        let mut project = Matrix4::new_perspective(
             self.app_data.swapchain_extent.width as f32
                 / self.app_data.swapchain_extent.height as f32,
             FRAC_PI_4,
             0.1,
             10.0,
         );
+
+        project[(1, 1)] *= -1.0;
 
         let ubo = UniformBufferObject {
             model,
@@ -360,4 +371,6 @@ pub struct AppData {
     pub index_buffer_memory: vk::DeviceMemory,
     pub uniform_buffers: Vec<vk::Buffer>,
     pub uniform_buffers_memories: Vec<vk::DeviceMemory>,
+    pub descriptor_pool: vk::DescriptorPool,
+    pub descriptor_sets: Vec<vk::DescriptorSet>,
 }

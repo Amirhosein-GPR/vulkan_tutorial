@@ -677,7 +677,7 @@ pub unsafe fn create_pipeline(
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
         .cull_mode(vk::CullModeFlags::BACK)
-        .front_face(vk::FrontFace::CLOCKWISE)
+        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .depth_bias_enable(false);
 
     let multisample_state_create_info = vk::PipelineMultisampleStateCreateInfo::builder()
@@ -864,6 +864,14 @@ pub unsafe fn create_command_buffers(
             app_data.index_buffer,
             0,
             vk::IndexType::UINT16,
+        );
+        device.cmd_bind_descriptor_sets(
+            *command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            app_data.pipeline_layout,
+            0,
+            &[app_data.descriptor_sets[i]],
+            &[],
         );
         device.cmd_draw_indexed(*command_buffer, app_data.indices.len() as u32, 1, 0, 0, 0);
         device.cmd_end_render_pass(*command_buffer);
@@ -1133,6 +1141,57 @@ pub unsafe fn create_uniform_buffers(
         app_data
             .uniform_buffers_memories
             .push(uniform_buffer_memory);
+    }
+
+    Ok(())
+}
+
+pub unsafe fn create_descriptor_pool(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let descriptor_pool_sizes = [vk::DescriptorPoolSize::builder()
+        .ty(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(app_data.swapchain_images.len() as u32)
+        .build()];
+
+    let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
+        .max_sets(app_data.swapchain_images.len() as u32)
+        .pool_sizes(&descriptor_pool_sizes);
+
+    app_data.descriptor_pool = device.create_descriptor_pool(&descriptor_pool_create_info, None)?;
+
+    Ok(())
+}
+
+pub unsafe fn create_descriptor_sets(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let descriptor_set_layouts =
+        vec![app_data.descriptor_set_layout; app_data.swapchain_images.len()];
+    let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(app_data.descriptor_pool)
+        .set_layouts(&descriptor_set_layouts);
+
+    app_data.descriptor_sets = device.allocate_descriptor_sets(&descriptor_set_allocate_info)?;
+
+    for i in 0..app_data.swapchain_images.len() {
+        let descriptor_buffer_infos = [vk::DescriptorBufferInfo::builder()
+            .buffer(app_data.uniform_buffers[i])
+            .offset(0)
+            .range(mem::size_of::<UniformBufferObject>() as u64)
+            .build()];
+
+        let write_descriptor_sets = [vk::WriteDescriptorSet::builder()
+            .dst_set(app_data.descriptor_sets[i])
+            .dst_binding(0)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .buffer_info(&descriptor_buffer_infos)
+            .build()];
+
+        device.update_descriptor_sets(&write_descriptor_sets, &[]);
     }
 
     Ok(())
