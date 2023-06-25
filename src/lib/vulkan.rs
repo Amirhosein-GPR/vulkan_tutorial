@@ -2,7 +2,7 @@ use crate::app::AppData;
 use crate::error::{ApplicationError, SuitabilityError};
 use ash::{extensions, vk, Device, Entry, Instance};
 use log::{error, info, trace, warn};
-use nalgebra::{Vector2, Vector3};
+use nalgebra::{Matrix4, Vector2, Vector3};
 use std::collections::HashSet;
 use std::ffi::{c_void, CStr, CString};
 use std::{mem, ptr};
@@ -136,6 +136,13 @@ impl Vertex {
 
         [pos, color]
     }
+}
+
+#[repr(C)]
+pub struct UniformBufferObject {
+    pub model: Matrix4<f32>,
+    pub view: Matrix4<f32>,
+    pub project: Matrix4<f32>,
 }
 
 // Creates a Vulkan instance.
@@ -704,7 +711,9 @@ pub unsafe fn create_pipeline(
     //     vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
 
     // Pipeline layout is used for creating uniform values which are used in shaders and their values can be changed at drawing times.
-    let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder();
+    let descriptor_set_layouts = [app_data.descriptor_set_layout];
+    let pipeline_layout_create_info =
+        vk::PipelineLayoutCreateInfo::builder().set_layouts(&descriptor_set_layouts);
 
     app_data.pipeline_layout = device.create_pipeline_layout(&pipeline_layout_create_info, None)?;
 
@@ -1078,6 +1087,53 @@ pub unsafe fn create_index_buffer(
 
     device.destroy_buffer(staging_buffer, None);
     device.free_memory(staging_buffer_memory, None);
+
+    Ok(())
+}
+
+pub unsafe fn create_descriptor_set_layout(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let descriptor_set_layout_bindings = [vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX)
+        .build()];
+
+    let descriptor_set_layout_create_info =
+        vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_layout_bindings);
+
+    app_data.descriptor_set_layout =
+        device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None)?;
+
+    Ok(())
+}
+
+pub unsafe fn create_uniform_buffers(
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    app_data.uniform_buffers.clear();
+    app_data.uniform_buffers_memories.clear();
+
+    for _ in 0..app_data.swapchain_images.len() {
+        let (uniform_buffer, uniform_buffer_memory) = create_buffer(
+            instance,
+            device,
+            app_data,
+            mem::size_of::<UniformBufferObject>() as u64,
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        )?;
+
+        app_data.uniform_buffers.push(uniform_buffer);
+        app_data
+            .uniform_buffers_memories
+            .push(uniform_buffer_memory);
+    }
 
     Ok(())
 }

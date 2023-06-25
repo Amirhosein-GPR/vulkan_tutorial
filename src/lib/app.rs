@@ -1,10 +1,11 @@
 use crate::error::ApplicationError;
 use crate::vulkan;
-use crate::vulkan::Vertex;
-use crate::vulkan::MAX_FRAMES_IN_FLIGHT;
-use crate::vulkan::VALIDATION_ENABLED;
+use crate::vulkan::{UniformBufferObject, Vertex, MAX_FRAMES_IN_FLIGHT, VALIDATION_ENABLED};
 use ash::{extensions, vk, Device, Entry, Instance};
-use nalgebra::{Vector2, Vector3};
+use nalgebra::{Matrix4, OPoint, Point3, Vector2, Vector3};
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+use std::time::Instant;
+use std::{mem, ptr};
 use winit::window::Window;
 
 pub struct App {
@@ -14,6 +15,7 @@ pub struct App {
     pub device: Device,
     frame: u8,
     pub resized: bool,
+    start: Instant,
 }
 
 impl App {
@@ -52,6 +54,8 @@ impl App {
 
             vulkan::create_render_pass(&instance, &device, &mut app_data)?;
 
+            vulkan::create_descriptor_set_layout(&device, &mut app_data)?;
+
             vulkan::create_pipeline(&device, &mut app_data)?;
 
             vulkan::create_framebuffers(&device, &mut app_data)?;
@@ -61,6 +65,8 @@ impl App {
             vulkan::create_vertex_buffer(&instance, &device, &mut app_data)?;
 
             vulkan::create_index_buffer(&instance, &device, &mut app_data)?;
+
+            vulkan::create_uniform_buffers(&instance, &device, &mut app_data)?;
 
             vulkan::create_command_buffers(&device, &mut app_data)?;
 
@@ -74,6 +80,7 @@ impl App {
             device,
             frame: 0,
             resized: false,
+            start: Instant::now(),
         })
     }
 
@@ -116,6 +123,10 @@ impl App {
 
         self.app_data.in_flight_image_fences[image_index as usize] =
             self.app_data.in_flight_frame_fences[self.frame as usize];
+
+        unsafe {
+            self.update_uniform_buffer(image_index as usize)?;
+        }
 
         // Each entry in wait_dst_stage_masks array corresponds to the semaphores with the same index in wait_semaphores.
         let wait_semaphores = [self.app_data.image_available_semaphores[self.frame as usize]];
@@ -181,6 +192,7 @@ impl App {
             vulkan::create_render_pass(&self.instance, &self.device, &mut self.app_data)?;
             vulkan::create_pipeline(&self.device, &mut self.app_data)?;
             vulkan::create_framebuffers(&self.device, &mut self.app_data)?;
+            vulkan::create_uniform_buffers(&self.instance, &self.device, &mut self.app_data)?;
             vulkan::create_command_buffers(&self.device, &mut self.app_data)?;
             self.app_data
                 .in_flight_image_fences
@@ -191,6 +203,16 @@ impl App {
     }
 
     unsafe fn destroy_swapchain(&mut self) {
+        self.app_data
+            .uniform_buffers
+            .iter()
+            .for_each(|b| self.device.destroy_buffer(*b, None));
+
+        self.app_data
+            .uniform_buffers_memories
+            .iter()
+            .for_each(|m| self.device.free_memory(*m, None));
+
         self.app_data
             .framebuffers
             .iter()
@@ -215,12 +237,55 @@ impl App {
         extensions::khr::Swapchain::new(&self.instance, &self.device)
             .destroy_swapchain(self.app_data.swapchain, None);
     }
+
+    unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<(), ApplicationError> {
+        let time = self.start.elapsed().as_secs_f32();
+
+        let model = Matrix4::from_axis_angle(&Vector3::z_axis(), time * FRAC_PI_2);
+
+        let view = Matrix4::look_at_rh(
+            &Point3::<f32>::new(2.0, 2.0, 2.0),
+            &Point3::<f32>::new(0.0, 0.0, 0.0),
+            &Vector3::<f32>::new(0.0, 0.0, 1.0),
+        );
+
+        let project = Matrix4::new_perspective(
+            self.app_data.swapchain_extent.width as f32
+                / self.app_data.swapchain_extent.height as f32,
+            FRAC_PI_4,
+            0.1,
+            10.0,
+        );
+
+        let ubo = UniformBufferObject {
+            model,
+            view,
+            project,
+        };
+
+        let memory = self.device.map_memory(
+            self.app_data.uniform_buffers_memories[image_index],
+            0,
+            mem::size_of::<UniformBufferObject>() as u64,
+            vk::MemoryMapFlags::empty(),
+        )?;
+
+        ptr::copy_nonoverlapping(&ubo, memory.cast(), 1);
+
+        self.device
+            .unmap_memory(self.app_data.uniform_buffers_memories[image_index]);
+
+        Ok(())
+    }
 }
 
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
             self.destroy_swapchain();
+
+            self.device
+                .destroy_descriptor_set_layout(self.app_data.descriptor_set_layout, None);
 
             self.device
                 .destroy_buffer(self.app_data.vertex_buffer, None);
@@ -277,6 +342,7 @@ pub struct AppData {
     pub swapchain_images: Vec<vk::Image>,
     pub swapchain_image_views: Vec<vk::ImageView>,
     pub render_pass: vk::RenderPass,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
     pub framebuffers: Vec<vk::Framebuffer>,
@@ -292,4 +358,6 @@ pub struct AppData {
     pub vertex_buffer_memory: vk::DeviceMemory,
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
+    pub uniform_buffers: Vec<vk::Buffer>,
+    pub uniform_buffers_memories: Vec<vk::DeviceMemory>,
 }
