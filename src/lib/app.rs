@@ -62,6 +62,8 @@ impl App {
 
             vulkan::create_command_pool(&entry, &instance, &device, &mut app_data)?;
 
+            vulkan::create_texture_image(&instance, &device, &mut app_data)?;
+
             vulkan::create_vertex_buffer(&instance, &device, &mut app_data)?;
 
             vulkan::create_index_buffer(&instance, &device, &mut app_data)?;
@@ -294,6 +296,9 @@ impl Drop for App {
     fn drop(&mut self) {
         unsafe {
             self.destroy_swapchain();
+            self.device.destroy_image(self.app_data.texture_image, None);
+            self.device
+                .free_memory(self.app_data.texture_image_memory, None);
 
             self.device
                 .destroy_descriptor_set_layout(self.app_data.descriptor_set_layout, None);
@@ -373,4 +378,6 @@ pub struct AppData {
     pub uniform_buffers_memories: Vec<vk::DeviceMemory>,
     pub descriptor_pool: vk::DescriptorPool,
     pub descriptor_sets: Vec<vk::DescriptorSet>,
+    pub texture_image: vk::Image,
+    pub texture_image_memory: vk::DeviceMemory,
 }

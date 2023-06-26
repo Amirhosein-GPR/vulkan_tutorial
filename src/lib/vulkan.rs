@@ -3,8 +3,10 @@ use crate::error::{ApplicationError, SuitabilityError};
 use ash::{extensions, vk, Device, Entry, Instance};
 use log::{error, info, trace, warn};
 use nalgebra::{Matrix4, Vector2, Vector3};
+use png::Decoder;
 use std::collections::HashSet;
 use std::ffi::{c_void, CStr, CString};
+use std::fs::File;
 use std::{mem, ptr};
 use winit::platform::x11::WindowExtX11;
 use winit::window::Window;
@@ -970,17 +972,7 @@ unsafe fn copy_buffer(
     destination_buffer: vk::Buffer,
     size: vk::DeviceSize,
 ) -> Result<(), ApplicationError> {
-    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-        .command_pool(app_data.command_pool)
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(1);
-
-    let command_buffer = device.allocate_command_buffers(&command_buffer_allocate_info)?[0];
-
-    let command_buffer_begin_info =
-        vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-    device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?;
+    let command_buffer = begin_single_time_commands(device, app_data)?;
 
     let buffer_copy_regions = vk::BufferCopy::builder().size(size).build();
 
@@ -991,18 +983,7 @@ unsafe fn copy_buffer(
         &[buffer_copy_regions],
     );
 
-    device.end_command_buffer(command_buffer)?;
-
-    let command_buffers = [command_buffer];
-    let submit_infos = [vk::SubmitInfo::builder()
-        .command_buffers(&command_buffers)
-        .build()];
-
-    device.queue_submit(app_data.graphics_queue, &submit_infos, vk::Fence::null())?;
-
-    device.queue_wait_idle(app_data.graphics_queue)?;
-
-    device.free_command_buffers(app_data.command_pool, &command_buffers);
+    end_single_time_commands(device, app_data, command_buffer)?;
 
     Ok(())
 }
@@ -1193,6 +1174,281 @@ pub unsafe fn create_descriptor_sets(
 
         device.update_descriptor_sets(&write_descriptor_sets, &[]);
     }
+
+    Ok(())
+}
+
+pub unsafe fn create_texture_image(
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), ApplicationError> {
+    let image_file = File::open("resources/texture.png")?;
+
+    let decoder = Decoder::new(image_file);
+    let mut reader = decoder.read_info()?;
+
+    let size = reader.info().raw_bytes() as u64;
+
+    let mut pixels = vec![0; size as usize];
+    reader.next_frame(&mut pixels)?;
+
+    let (width, height) = reader.info().size();
+
+    let (staging_buffer, staging_buffer_memory) = create_buffer(
+        instance,
+        device,
+        app_data,
+        size,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    let memory = device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())?;
+
+    ptr::copy_nonoverlapping(pixels.as_ptr(), memory.cast(), pixels.len());
+
+    device.unmap_memory(staging_buffer_memory);
+
+    let (texture_image, texture_image_memory) = create_image(
+        instance,
+        device,
+        app_data,
+        width,
+        height,
+        vk::Format::R8G8B8A8_SRGB,
+        vk::ImageTiling::OPTIMAL,
+        vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    )?;
+
+    app_data.texture_image = texture_image;
+    app_data.texture_image_memory = texture_image_memory;
+
+    transition_image_layout(
+        device,
+        app_data,
+        app_data.texture_image,
+        vk::Format::R8G8B8A8_SRGB,
+        vk::ImageLayout::UNDEFINED,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+    )?;
+
+    copy_buffer_to_image(
+        device,
+        app_data,
+        staging_buffer,
+        app_data.texture_image,
+        width,
+        height,
+    )?;
+
+    transition_image_layout(
+        device,
+        app_data,
+        app_data.texture_image,
+        vk::Format::R8G8B8A8_SRGB,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+    )?;
+
+    device.destroy_buffer(staging_buffer, None);
+    device.free_memory(staging_buffer_memory, None);
+
+    Ok(())
+}
+
+unsafe fn create_image(
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+    width: u32,
+    height: u32,
+    format: vk::Format,
+    image_tiling: vk::ImageTiling,
+    image_usage_flags: vk::ImageUsageFlags,
+    memory_property_flags: vk::MemoryPropertyFlags,
+) -> Result<(vk::Image, vk::DeviceMemory), ApplicationError> {
+    let image_create_info = vk::ImageCreateInfo::builder()
+        .image_type(vk::ImageType::TYPE_2D)
+        .format(format)
+        .extent(vk::Extent3D {
+            width,
+            height,
+            depth: 1,
+        })
+        .mip_levels(1)
+        .array_layers(1)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .tiling(image_tiling)
+        .usage(image_usage_flags)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .initial_layout(vk::ImageLayout::UNDEFINED);
+
+    let image = device.create_image(&image_create_info, None)?;
+
+    let image_memory_requirements = device.get_image_memory_requirements(image);
+
+    let memory_allocate_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(image_memory_requirements.size)
+        .memory_type_index(get_memory_type_index(
+            instance,
+            app_data,
+            memory_property_flags,
+            image_memory_requirements,
+        )?);
+
+    let image_memory = device.allocate_memory(&memory_allocate_info, None)?;
+
+    device.bind_image_memory(image, image_memory, 0)?;
+
+    Ok((image, image_memory))
+}
+
+unsafe fn begin_single_time_commands(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<vk::CommandBuffer, ApplicationError> {
+    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+        .command_pool(app_data.command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(1);
+
+    let command_buffer = device.allocate_command_buffers(&command_buffer_allocate_info)?[0];
+
+    let command_buffer_begin_info =
+        vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+    device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?;
+
+    Ok(command_buffer)
+}
+
+unsafe fn end_single_time_commands(
+    device: &Device,
+    app_data: &mut AppData,
+    command_buffer: vk::CommandBuffer,
+) -> Result<(), ApplicationError> {
+    device.end_command_buffer(command_buffer)?;
+
+    let command_buffers = [command_buffer];
+    let submit_infos = [vk::SubmitInfo::builder()
+        .command_buffers(&command_buffers)
+        .build()];
+
+    device.queue_submit(app_data.graphics_queue, &submit_infos, vk::Fence::null())?;
+
+    device.queue_wait_idle(app_data.graphics_queue)?;
+
+    device.free_command_buffers(app_data.command_pool, &command_buffers);
+
+    Ok(())
+}
+
+unsafe fn transition_image_layout(
+    device: &Device,
+    app_data: &mut AppData,
+    image: vk::Image,
+    format: vk::Format,
+    old_image_layout: vk::ImageLayout,
+    new_image_layout: vk::ImageLayout,
+) -> Result<(), ApplicationError> {
+    let (src_access_mask, dst_access_mask, src_stage_mask, dst_stage_mask) =
+        match (old_image_layout, new_image_layout) {
+            (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
+                vk::AccessFlags::empty(),
+                vk::AccessFlags::TRANSFER_WRITE,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+            ),
+            (vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL) => (
+                vk::AccessFlags::TRANSFER_WRITE,
+                vk::AccessFlags::SHADER_READ,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+            ),
+            _ => {
+                return Err(SuitabilityError(
+                    "Unsupported image layout transition!".to_string(),
+                ))?
+            }
+        };
+
+    let command_buffer = begin_single_time_commands(device, app_data)?;
+
+    let image_subresource_range = vk::ImageSubresourceRange::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .base_mip_level(0)
+        .level_count(1)
+        .base_array_layer(0)
+        .layer_count(1)
+        .build();
+
+    let image_memory_barriers = [vk::ImageMemoryBarrier::builder()
+        .src_access_mask(src_access_mask)
+        .dst_access_mask(dst_access_mask)
+        .old_layout(old_image_layout)
+        .new_layout(new_image_layout)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .image(image)
+        .subresource_range(image_subresource_range)
+        .build()];
+
+    device.cmd_pipeline_barrier(
+        command_buffer,
+        src_stage_mask,
+        dst_stage_mask,
+        vk::DependencyFlags::empty(),
+        &[],
+        &[],
+        &image_memory_barriers,
+    );
+
+    end_single_time_commands(device, app_data, command_buffer)?;
+
+    Ok(())
+}
+
+unsafe fn copy_buffer_to_image(
+    device: &Device,
+    app_data: &mut AppData,
+    buffer: vk::Buffer,
+    image: vk::Image,
+    width: u32,
+    height: u32,
+) -> Result<(), ApplicationError> {
+    let command_buffer = begin_single_time_commands(device, app_data)?;
+
+    let image_subresource_layers = vk::ImageSubresourceLayers::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .mip_level(0)
+        .base_array_layer(0)
+        .layer_count(1)
+        .build();
+
+    let buffer_image_copies = [vk::BufferImageCopy::builder()
+        .buffer_offset(0)
+        .buffer_row_length(0)
+        .buffer_image_height(0)
+        .image_subresource(image_subresource_layers)
+        .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+        .image_extent(vk::Extent3D {
+            width,
+            height,
+            depth: 1,
+        })
+        .build()];
+
+    device.cmd_copy_buffer_to_image(
+        command_buffer,
+        buffer,
+        image,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        &buffer_image_copies,
+    );
+
+    end_single_time_commands(device, app_data, command_buffer)?;
 
     Ok(())
 }

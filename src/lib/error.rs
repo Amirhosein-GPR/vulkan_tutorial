@@ -1,4 +1,6 @@
 use ash::{vk, LoadingError};
+use png::DecodingError;
+use std::io;
 use std::{error::Error, fmt::Display};
 use winit::error::OsError;
 
@@ -44,6 +46,18 @@ impl From<SuitabilityError> for ApplicationError {
 impl From<(Vec<vk::Pipeline>, vk::Result)> for ApplicationError {
     fn from(value: (Vec<vk::Pipeline>, vk::Result)) -> Self {
         Self::VulkanError(value.1)
+    }
+}
+
+impl From<io::Error> for ApplicationError {
+    fn from(value: io::Error) -> Self {
+        Self::EngineError(value.to_string())
+    }
+}
+
+impl From<DecodingError> for ApplicationError {
+    fn from(value: DecodingError) -> Self {
+        Self::EngineError(value.to_string())
     }
 }
 
