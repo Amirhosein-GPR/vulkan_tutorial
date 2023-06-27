@@ -1,4 +1,4 @@
-use crate::error::ApplicationError;
+use crate::error::AppError;
 use crate::vulkan;
 use crate::vulkan::{UniformBufferObject, Vertex, MAX_FRAMES_IN_FLIGHT, VALIDATION_ENABLED};
 use ash::{extensions, vk, Device, Entry, Instance};
@@ -19,13 +19,29 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(window: &Window) -> Result<Self, ApplicationError> {
+    pub fn new(window: &Window) -> Result<Self, AppError> {
         let indices: Vec<u16> = vec![0, 1, 2, 2, 3, 0];
         let vertecies = vec![
-            Vertex::new(Vector2::new(-0.5, -0.5), Vector3::new(1.0, 0.0, 0.0)),
-            Vertex::new(Vector2::new(0.5, -0.5), Vector3::new(0.0, 1.0, 0.0)),
-            Vertex::new(Vector2::new(0.5, 0.5), Vector3::new(0.0, 0.0, 1.0)),
-            Vertex::new(Vector2::new(-0.5, 0.5), Vector3::new(1.0, 1.0, 1.0)),
+            Vertex::new(
+                Vector2::new(-0.5, -0.5),
+                Vector3::new(1.0, 0.0, 0.0),
+                Vector2::new(1.0, 0.0),
+            ),
+            Vertex::new(
+                Vector2::new(0.5, -0.5),
+                Vector3::new(0.0, 1.0, 0.0),
+                Vector2::new(0.0, 0.0),
+            ),
+            Vertex::new(
+                Vector2::new(0.5, 0.5),
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector2::new(0.0, 1.0),
+            ),
+            Vertex::new(
+                Vector2::new(-0.5, 0.5),
+                Vector3::new(1.0, 1.0, 1.0),
+                Vector2::new(1.0, 1.0),
+            ),
         ];
 
         let mut app_data = AppData::default();
@@ -64,6 +80,10 @@ impl App {
 
             vulkan::create_texture_image(&instance, &device, &mut app_data)?;
 
+            vulkan::create_texture_image_view(&device, &mut app_data)?;
+
+            vulkan::create_texture_sampler(&device, &mut app_data)?;
+
             vulkan::create_vertex_buffer(&instance, &device, &mut app_data)?;
 
             vulkan::create_index_buffer(&instance, &device, &mut app_data)?;
@@ -90,7 +110,7 @@ impl App {
         })
     }
 
-    pub fn render(&mut self, window: &Window) -> Result<(), ApplicationError> {
+    pub fn render(&mut self, window: &Window) -> Result<(), AppError> {
         unsafe {
             self.device.wait_for_fences(
                 &[self.app_data.in_flight_frame_fences[self.frame as usize]],
@@ -182,7 +202,7 @@ impl App {
         Ok(())
     }
 
-    pub fn recreate_swapchain(&mut self, window: &Window) -> Result<(), ApplicationError> {
+    pub fn recreate_swapchain(&mut self, window: &Window) -> Result<(), AppError> {
         unsafe {
             self.device.device_wait_idle()?;
             self.destroy_swapchain();
@@ -249,7 +269,7 @@ impl App {
             .destroy_swapchain(self.app_data.swapchain, None);
     }
 
-    unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<(), ApplicationError> {
+    unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<(), AppError> {
         let time = self.start.elapsed().as_secs_f32();
 
         let model = Matrix4::from_axis_angle(&Vector3::z_axis(), time * FRAC_PI_2);
@@ -296,7 +316,15 @@ impl Drop for App {
     fn drop(&mut self) {
         unsafe {
             self.destroy_swapchain();
+
+            self.device
+                .destroy_sampler(self.app_data.texture_sampler, None);
+
+            self.device
+                .destroy_image_view(self.app_data.texture_image_view, None);
+
             self.device.destroy_image(self.app_data.texture_image, None);
+
             self.device
                 .free_memory(self.app_data.texture_image_memory, None);
 
@@ -380,4 +408,6 @@ pub struct AppData {
     pub descriptor_sets: Vec<vk::DescriptorSet>,
     pub texture_image: vk::Image,
     pub texture_image_memory: vk::DeviceMemory,
+    pub texture_image_view: vk::ImageView,
+    pub texture_sampler: vk::Sampler,
 }

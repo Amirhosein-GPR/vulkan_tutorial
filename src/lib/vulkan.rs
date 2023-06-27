@@ -1,12 +1,12 @@
 use crate::app::AppData;
-use crate::error::{ApplicationError, SuitabilityError};
+use crate::error::{AppError, SuitabilityError};
 use ash::{extensions, vk, Device, Entry, Instance};
 use log::{error, info, trace, warn};
 use nalgebra::{Matrix4, Vector2, Vector3};
 use png::Decoder;
 use std::collections::HashSet;
 use std::ffi::{c_void, CStr, CString};
-use std::fs::File;
+use std::fs::{self, File};
 use std::{mem, ptr};
 use winit::platform::x11::WindowExtX11;
 use winit::window::Window;
@@ -37,7 +37,7 @@ impl QueueFamilyIndices {
         instance: &Instance,
         app_data: &mut AppData,
         physical_device: vk::PhysicalDevice,
-    ) -> Result<Self, ApplicationError> {
+    ) -> Result<Self, AppError> {
         let queue_family_properties =
             instance.get_physical_device_queue_family_properties(physical_device);
 
@@ -89,7 +89,7 @@ impl SwapchainSupport {
         instance: &Instance,
         app_data: &mut AppData,
         physical_device: vk::PhysicalDevice,
-    ) -> Result<Self, ApplicationError> {
+    ) -> Result<Self, AppError> {
         let surface_loader = extensions::khr::Surface::new(entry, instance);
 
         Ok(Self {
@@ -105,13 +105,18 @@ impl SwapchainSupport {
 
 #[repr(C)]
 pub struct Vertex {
-    pos: Vector2<f32>,
+    position: Vector2<f32>,
     color: Vector3<f32>,
+    texture_coordinate: Vector2<f32>,
 }
 
 impl Vertex {
-    pub fn new(pos: Vector2<f32>, color: Vector3<f32>) -> Self {
-        Self { pos, color }
+    pub fn new(pos: Vector2<f32>, color: Vector3<f32>, texture_coordinate: Vector2<f32>) -> Self {
+        Self {
+            position: pos,
+            color,
+            texture_coordinate,
+        }
     }
 
     fn binding_description() -> vk::VertexInputBindingDescription {
@@ -122,7 +127,7 @@ impl Vertex {
             .build()
     }
 
-    fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 2] {
+    fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 3] {
         let pos = vk::VertexInputAttributeDescription::builder()
             .location(0)
             .binding(0)
@@ -135,8 +140,14 @@ impl Vertex {
             .format(vk::Format::R32G32B32_SFLOAT)
             .offset(mem::size_of::<Vector2<f32>>() as u32)
             .build();
+        let texture_coordinate = vk::VertexInputAttributeDescription::builder()
+            .location(2)
+            .binding(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset((mem::size_of::<Vector2<f32>>() + mem::size_of::<Vector3<f32>>()) as u32)
+            .build();
 
-        [pos, color]
+        [pos, color, texture_coordinate]
     }
 }
 
@@ -152,7 +163,7 @@ pub unsafe fn create_instance(
     window: &Window,
     entry: &Entry,
     app_data: &mut AppData,
-) -> Result<Instance, ApplicationError> {
+) -> Result<Instance, AppError> {
     let application_name = CString::new("Vulkan tutorial").unwrap();
     let engine_name = CString::new("Vulkan engine").unwrap();
     let application_info = vk::ApplicationInfo::builder()
@@ -182,7 +193,7 @@ pub unsafe fn create_instance(
             .collect::<Vec<_>>();
 
         if !available_instance_layer_names.contains(&VALIDATION_LAYER_NAME) {
-            return Err(ApplicationError::EngineError(
+            return Err(AppError::EngineError(
                 "Validation layer requested but not supported.".to_string(),
             ));
         }
@@ -269,7 +280,7 @@ pub unsafe fn pick_physical_device(
     entry: &Entry,
     instance: &Instance,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     for physical_device in instance.enumerate_physical_devices()? {
         let physical_device_name = CStr::from_ptr(
             instance
@@ -301,7 +312,7 @@ unsafe fn check_physical_device(
     instance: &Instance,
     app_data: &mut AppData,
     physical_device: vk::PhysicalDevice,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let physical_device_properties = instance.get_physical_device_properties(physical_device);
     if physical_device_properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
         return Err(SuitabilityError(
@@ -310,10 +321,8 @@ unsafe fn check_physical_device(
     }
 
     let physical_device_features = instance.get_physical_device_features(physical_device);
-    if physical_device_features.geometry_shader != vk::TRUE {
-        return Err(SuitabilityError(
-            "Missing geometry shader support.".to_string(),
-        ))?;
+    if physical_device_features.sampler_anisotropy != vk::TRUE {
+        return Err(SuitabilityError("Missing sampler anisotropy.".to_string()))?;
     }
 
     QueueFamilyIndices::get(entry, instance, app_data, physical_device)?;
@@ -336,7 +345,7 @@ pub unsafe fn create_device(
     entry: &Entry,
     instance: &Instance,
     app_data: &mut AppData,
-) -> Result<Device, ApplicationError> {
+) -> Result<Device, AppError> {
     let queue_family_indices =
         QueueFamilyIndices::get(entry, instance, app_data, app_data.physical_device)?;
 
@@ -361,7 +370,7 @@ pub unsafe fn create_device(
         .into_iter()
         .map(|e| e.as_ptr())
         .collect::<Vec<_>>();
-    let device_features = vk::PhysicalDeviceFeatures::builder();
+    let device_features = vk::PhysicalDeviceFeatures::builder().sampler_anisotropy(true);
     if VALIDATION_ENABLED {
         device_layers_names.push(VALIDATION_LAYER_NAME.as_ptr());
     }
@@ -394,7 +403,7 @@ pub unsafe fn create_surface(
     entry: &Entry,
     instance: &Instance,
     window: &Window,
-) -> Result<vk::SurfaceKHR, ApplicationError> {
+) -> Result<vk::SurfaceKHR, AppError> {
     let xlib_surface_create_info = vk::XlibSurfaceCreateInfoKHR::builder()
         .dpy(window.xlib_display().unwrap() as *mut vk::Display)
         .window(window.xlib_window().unwrap());
@@ -409,7 +418,7 @@ pub unsafe fn create_surface(
 unsafe fn check_physical_device_extensions(
     instance: &Instance,
     physical_device: vk::PhysicalDevice,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let available_device_extensions_names = instance
         .enumerate_device_extension_properties(physical_device)?
         .into_iter()
@@ -489,7 +498,7 @@ pub unsafe fn create_swapchain(
     instance: &Instance,
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let queue_family_indices =
         QueueFamilyIndices::get(entry, instance, app_data, app_data.physical_device)?;
     let swapchain_support =
@@ -548,33 +557,11 @@ pub unsafe fn create_swapchain(
 pub unsafe fn create_swapchain_image_views(
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     app_data.swapchain_image_views = app_data
         .swapchain_images
         .iter()
-        .map(|i| {
-            let component_mapping = vk::ComponentMapping::builder()
-                .r(vk::ComponentSwizzle::IDENTITY)
-                .g(vk::ComponentSwizzle::IDENTITY)
-                .b(vk::ComponentSwizzle::IDENTITY)
-                .a(vk::ComponentSwizzle::IDENTITY)
-                .build();
-            let subresource_range = vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_mip_level(0)
-                .level_count(1)
-                .base_array_layer(0)
-                .layer_count(1)
-                .build();
-            let image_view_create_info = vk::ImageViewCreateInfo::builder()
-                .image(*i)
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(app_data.swapchain_format)
-                .components(component_mapping)
-                .subresource_range(subresource_range);
-
-            device.create_image_view(&image_view_create_info, None)
-        })
+        .map(|i| create_image_view(device, *i, app_data.swapchain_format))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(())
 }
@@ -583,7 +570,7 @@ pub unsafe fn create_render_pass(
     instance: &Instance,
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let color_attachment_descriptions = [vk::AttachmentDescription::builder()
         .format(app_data.swapchain_format)
         .samples(vk::SampleCountFlags::TYPE_1)
@@ -625,15 +612,12 @@ pub unsafe fn create_render_pass(
 }
 
 // Creates pipeline by specifying it's required states and stages.
-pub unsafe fn create_pipeline(
-    device: &Device,
-    app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
-    let vertex_shader_spv = include_bytes!("../../shaders/vert.spv");
-    let fragment_shader_spv = include_bytes!("../../shaders/frag.spv");
+pub unsafe fn create_pipeline(device: &Device, app_data: &mut AppData) -> Result<(), AppError> {
+    let vertex_shader_spv = fs::read("shaders/vert.spv")?;
+    let fragment_shader_spv = fs::read("shaders/frag.spv")?;
 
-    let vertex_shader_module = create_shader_module(device, vertex_shader_spv)?;
-    let fragment_shader_module = create_shader_module(device, fragment_shader_spv)?;
+    let vertex_shader_module = create_shader_module(device, &vertex_shader_spv)?;
+    let fragment_shader_module = create_shader_module(device, &fragment_shader_spv)?;
 
     let vertex_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)
@@ -757,12 +741,12 @@ pub unsafe fn create_pipeline(
 unsafe fn create_shader_module(
     device: &Device,
     bytecode: &[u8],
-) -> Result<vk::ShaderModule, ApplicationError> {
+) -> Result<vk::ShaderModule, AppError> {
     // Shader module create info needs a u32 slice but what we read is a u8 slice. So we align our u8 slice to a u32 slice.
     let (prefix, code, suffix) = bytecode.align_to::<u32>();
     // We also check if our slice is aligned properly which means there shouldn't be any prefix or suffix for the aligned slice.
     if !prefix.is_empty() || !suffix.is_empty() {
-        return Err(ApplicationError::EngineError(
+        return Err(AppError::EngineError(
             "Shader bytecode is not properly aligned.".to_string(),
         ));
     }
@@ -772,10 +756,7 @@ unsafe fn create_shader_module(
     Ok(device.create_shader_module(&shader_module_create_info, None)?)
 }
 
-pub unsafe fn create_framebuffers(
-    device: &Device,
-    app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+pub unsafe fn create_framebuffers(device: &Device, app_data: &mut AppData) -> Result<(), AppError> {
     app_data.framebuffers = app_data
         .swapchain_image_views
         .iter()
@@ -800,7 +781,7 @@ pub unsafe fn create_command_pool(
     instance: &Instance,
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let queue_family_indices =
         QueueFamilyIndices::get(entry, instance, app_data, app_data.physical_device)?;
     let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
@@ -816,7 +797,7 @@ pub unsafe fn create_command_pool(
 pub unsafe fn create_command_buffers(
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
         .command_pool(app_data.command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
@@ -884,10 +865,7 @@ pub unsafe fn create_command_buffers(
     Ok(())
 }
 
-pub unsafe fn create_sync_objects(
-    device: &Device,
-    app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+pub unsafe fn create_sync_objects(device: &Device, app_data: &mut AppData) -> Result<(), AppError> {
     let semaphore_create_info = vk::SemaphoreCreateInfo::builder();
     let fence_create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
 
@@ -917,7 +895,7 @@ unsafe fn get_memory_type_index(
     app_data: &mut AppData,
     memory_property_flags: vk::MemoryPropertyFlags,
     memory_requirements: vk::MemoryRequirements,
-) -> Result<u32, ApplicationError> {
+) -> Result<u32, AppError> {
     let memory_properties =
         instance.get_physical_device_memory_properties(app_data.physical_device);
 
@@ -927,7 +905,7 @@ unsafe fn get_memory_type_index(
             let memory_type = memory_properties.memory_types[*i as usize];
             suitable && memory_type.property_flags.contains(memory_property_flags)
         })
-        .ok_or(ApplicationError::EngineError(
+        .ok_or(AppError::EngineError(
             "Failed to find suitable memory type.".to_string(),
         ))
 }
@@ -939,7 +917,7 @@ unsafe fn create_buffer(
     size: vk::DeviceSize,
     buffer_usage_flags: vk::BufferUsageFlags,
     memory_property_flags: vk::MemoryPropertyFlags,
-) -> Result<(vk::Buffer, vk::DeviceMemory), ApplicationError> {
+) -> Result<(vk::Buffer, vk::DeviceMemory), AppError> {
     let buffer_create_info = vk::BufferCreateInfo::builder()
         .size(size)
         .usage(buffer_usage_flags)
@@ -971,7 +949,7 @@ unsafe fn copy_buffer(
     source_buffer: vk::Buffer,
     destination_buffer: vk::Buffer,
     size: vk::DeviceSize,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let command_buffer = begin_single_time_commands(device, app_data)?;
 
     let buffer_copy_regions = vk::BufferCopy::builder().size(size).build();
@@ -992,7 +970,7 @@ pub unsafe fn create_vertex_buffer(
     instance: &Instance,
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let size = (mem::size_of::<Vertex>() * app_data.vertecies.len()) as u64;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
@@ -1038,7 +1016,7 @@ pub unsafe fn create_index_buffer(
     instance: &Instance,
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let size = (mem::size_of::<u16>() * app_data.indices.len()) as u64;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
@@ -1083,13 +1061,21 @@ pub unsafe fn create_index_buffer(
 pub unsafe fn create_descriptor_set_layout(
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
-    let descriptor_set_layout_bindings = [vk::DescriptorSetLayoutBinding::builder()
-        .binding(0)
-        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-        .descriptor_count(1)
-        .stage_flags(vk::ShaderStageFlags::VERTEX)
-        .build()];
+) -> Result<(), AppError> {
+    let descriptor_set_layout_bindings = [
+        vk::DescriptorSetLayoutBinding::builder()
+            .binding(0)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::VERTEX)
+            .build(),
+        vk::DescriptorSetLayoutBinding::builder()
+            .binding(1)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+            .build(),
+    ];
 
     let descriptor_set_layout_create_info =
         vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_layout_bindings);
@@ -1104,7 +1090,7 @@ pub unsafe fn create_uniform_buffers(
     instance: &Instance,
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     app_data.uniform_buffers.clear();
     app_data.uniform_buffers_memories.clear();
 
@@ -1130,11 +1116,17 @@ pub unsafe fn create_uniform_buffers(
 pub unsafe fn create_descriptor_pool(
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
-    let descriptor_pool_sizes = [vk::DescriptorPoolSize::builder()
-        .ty(vk::DescriptorType::UNIFORM_BUFFER)
-        .descriptor_count(app_data.swapchain_images.len() as u32)
-        .build()];
+) -> Result<(), AppError> {
+    let descriptor_pool_sizes = [
+        vk::DescriptorPoolSize::builder()
+            .ty(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(app_data.swapchain_images.len() as u32)
+            .build(),
+        vk::DescriptorPoolSize::builder()
+            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(app_data.swapchain_images.len() as u32)
+            .build(),
+    ];
 
     let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
         .max_sets(app_data.swapchain_images.len() as u32)
@@ -1148,7 +1140,7 @@ pub unsafe fn create_descriptor_pool(
 pub unsafe fn create_descriptor_sets(
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let descriptor_set_layouts =
         vec![app_data.descriptor_set_layout; app_data.swapchain_images.len()];
     let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo::builder()
@@ -1164,13 +1156,28 @@ pub unsafe fn create_descriptor_sets(
             .range(mem::size_of::<UniformBufferObject>() as u64)
             .build()];
 
-        let write_descriptor_sets = [vk::WriteDescriptorSet::builder()
-            .dst_set(app_data.descriptor_sets[i])
-            .dst_binding(0)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .buffer_info(&descriptor_buffer_infos)
+        let descriptor_image_infos = [vk::DescriptorImageInfo::builder()
+            .sampler(app_data.texture_sampler)
+            .image_view(app_data.texture_image_view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
             .build()];
+
+        let write_descriptor_sets = [
+            vk::WriteDescriptorSet::builder()
+                .dst_set(app_data.descriptor_sets[i])
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .buffer_info(&descriptor_buffer_infos)
+                .build(),
+            vk::WriteDescriptorSet::builder()
+                .dst_set(app_data.descriptor_sets[i])
+                .dst_binding(1)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&descriptor_image_infos)
+                .build(),
+        ];
 
         device.update_descriptor_sets(&write_descriptor_sets, &[]);
     }
@@ -1182,7 +1189,7 @@ pub unsafe fn create_texture_image(
     instance: &Instance,
     device: &Device,
     app_data: &mut AppData,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let image_file = File::open("resources/texture.png")?;
 
     let decoder = Decoder::new(image_file);
@@ -1268,7 +1275,7 @@ unsafe fn create_image(
     image_tiling: vk::ImageTiling,
     image_usage_flags: vk::ImageUsageFlags,
     memory_property_flags: vk::MemoryPropertyFlags,
-) -> Result<(vk::Image, vk::DeviceMemory), ApplicationError> {
+) -> Result<(vk::Image, vk::DeviceMemory), AppError> {
     let image_create_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::TYPE_2D)
         .format(format)
@@ -1308,7 +1315,7 @@ unsafe fn create_image(
 unsafe fn begin_single_time_commands(
     device: &Device,
     app_data: &mut AppData,
-) -> Result<vk::CommandBuffer, ApplicationError> {
+) -> Result<vk::CommandBuffer, AppError> {
     let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
         .command_pool(app_data.command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
@@ -1328,7 +1335,7 @@ unsafe fn end_single_time_commands(
     device: &Device,
     app_data: &mut AppData,
     command_buffer: vk::CommandBuffer,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     device.end_command_buffer(command_buffer)?;
 
     let command_buffers = [command_buffer];
@@ -1352,7 +1359,7 @@ unsafe fn transition_image_layout(
     format: vk::Format,
     old_image_layout: vk::ImageLayout,
     new_image_layout: vk::ImageLayout,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let (src_access_mask, dst_access_mask, src_stage_mask, dst_stage_mask) =
         match (old_image_layout, new_image_layout) {
             (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
@@ -1417,7 +1424,7 @@ unsafe fn copy_buffer_to_image(
     image: vk::Image,
     width: u32,
     height: u32,
-) -> Result<(), ApplicationError> {
+) -> Result<(), AppError> {
     let command_buffer = begin_single_time_commands(device, app_data)?;
 
     let image_subresource_layers = vk::ImageSubresourceLayers::builder()
@@ -1449,6 +1456,64 @@ unsafe fn copy_buffer_to_image(
     );
 
     end_single_time_commands(device, app_data, command_buffer)?;
+
+    Ok(())
+}
+
+pub unsafe fn create_texture_image_view(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), AppError> {
+    app_data.texture_image_view =
+        create_image_view(device, app_data.texture_image, vk::Format::R8G8B8A8_SRGB)?;
+
+    Ok(())
+}
+
+unsafe fn create_image_view(
+    device: &Device,
+    image: vk::Image,
+    format: vk::Format,
+) -> Result<vk::ImageView, AppError> {
+    let image_subresource_range = vk::ImageSubresourceRange::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .base_mip_level(0)
+        .level_count(1)
+        .base_array_layer(0)
+        .layer_count(1)
+        .build();
+
+    let image_view_create_info = vk::ImageViewCreateInfo::builder()
+        .image(image)
+        .view_type(vk::ImageViewType::TYPE_2D)
+        .format(format)
+        .subresource_range(image_subresource_range);
+
+    Ok(device.create_image_view(&image_view_create_info, None)?)
+}
+
+pub unsafe fn create_texture_sampler(
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), AppError> {
+    let sampler_create_info = vk::SamplerCreateInfo::builder()
+        .mag_filter(vk::Filter::LINEAR)
+        .min_filter(vk::Filter::LINEAR)
+        .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+        .address_mode_u(vk::SamplerAddressMode::REPEAT)
+        .address_mode_v(vk::SamplerAddressMode::REPEAT)
+        .address_mode_w(vk::SamplerAddressMode::REPEAT)
+        .mip_lod_bias(0.0)
+        .anisotropy_enable(true)
+        .max_anisotropy(16.0)
+        .compare_enable(false)
+        .compare_op(vk::CompareOp::ALWAYS)
+        .min_lod(0.0)
+        .max_lod(0.0)
+        .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
+        .unnormalized_coordinates(false);
+
+    app_data.texture_sampler = device.create_sampler(&sampler_create_info, None)?;
 
     Ok(())
 }

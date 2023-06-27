@@ -7,13 +7,13 @@
 
 use pretty_env_logger;
 use vulkan_tutorial::app::App;
-use vulkan_tutorial::error::ApplicationError;
+use vulkan_tutorial::error::AppError;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
 
-fn main() -> Result<(), ApplicationError> {
+fn main() -> Result<(), AppError> {
     // Initializing pretty_env_logger library (used for logging purposes).
     pretty_env_logger::init();
 
