@@ -105,15 +105,19 @@ impl SwapchainSupport {
 
 #[repr(C)]
 pub struct Vertex {
-    position: Vector2<f32>,
+    position: Vector3<f32>,
     color: Vector3<f32>,
     texture_coordinate: Vector2<f32>,
 }
 
 impl Vertex {
-    pub fn new(pos: Vector2<f32>, color: Vector3<f32>, texture_coordinate: Vector2<f32>) -> Self {
+    pub fn new(
+        position: Vector3<f32>,
+        color: Vector3<f32>,
+        texture_coordinate: Vector2<f32>,
+    ) -> Self {
         Self {
-            position: pos,
+            position,
             color,
             texture_coordinate,
         }
@@ -128,26 +132,26 @@ impl Vertex {
     }
 
     fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 3] {
-        let pos = vk::VertexInputAttributeDescription::builder()
+        let position = vk::VertexInputAttributeDescription::builder()
             .location(0)
             .binding(0)
-            .format(vk::Format::R32G32_SFLOAT)
+            .format(vk::Format::R32G32B32_SFLOAT)
             .offset(0)
             .build();
         let color = vk::VertexInputAttributeDescription::builder()
             .location(1)
             .binding(0)
             .format(vk::Format::R32G32B32_SFLOAT)
-            .offset(mem::size_of::<Vector2<f32>>() as u32)
+            .offset(mem::size_of::<Vector3<f32>>() as u32)
             .build();
         let texture_coordinate = vk::VertexInputAttributeDescription::builder()
             .location(2)
             .binding(0)
             .format(vk::Format::R32G32_SFLOAT)
-            .offset((mem::size_of::<Vector2<f32>>() + mem::size_of::<Vector3<f32>>()) as u32)
+            .offset((mem::size_of::<Vector3<f32>>() + mem::size_of::<Vector3<f32>>()) as u32)
             .build();
 
-        [pos, color, texture_coordinate]
+        [position, color, texture_coordinate]
     }
 }
 
@@ -561,7 +565,14 @@ pub unsafe fn create_swapchain_image_views(
     app_data.swapchain_image_views = app_data
         .swapchain_images
         .iter()
-        .map(|i| create_image_view(device, *i, app_data.swapchain_format))
+        .map(|i| {
+            create_image_view(
+                device,
+                *i,
+                app_data.swapchain_format,
+                vk::ImageAspectFlags::COLOR,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(())
 }
@@ -571,7 +582,7 @@ pub unsafe fn create_render_pass(
     device: &Device,
     app_data: &mut AppData,
 ) -> Result<(), AppError> {
-    let color_attachment_descriptions = [vk::AttachmentDescription::builder()
+    let color_attachment_descriptions = vk::AttachmentDescription::builder()
         .format(app_data.swapchain_format)
         .samples(vk::SampleCountFlags::TYPE_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -580,29 +591,53 @@ pub unsafe fn create_render_pass(
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-        .build()];
-
+        .build();
     let color_attachment_refrences = [vk::AttachmentReference::builder()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
         .build()];
 
+    let depth_attachment_descriptions = vk::AttachmentDescription::builder()
+        .format(get_depth_format(instance, app_data)?)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .build();
+    let depth_attachment_refrences = vk::AttachmentReference::builder()
+        .attachment(1)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
     let subpass_descriptions = [vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(&color_attachment_refrences)
+        .depth_stencil_attachment(&depth_attachment_refrences)
         .build()];
 
     let subpass_dependencies = [vk::SubpassDependency::builder()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
+        .dst_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
         .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+        .dst_access_mask(
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        )
         .build()];
 
+    let attachment_descriptions = [color_attachment_descriptions, depth_attachment_descriptions];
     let render_pass_create_info = vk::RenderPassCreateInfo::builder()
-        .attachments(&color_attachment_descriptions)
+        .attachments(&attachment_descriptions)
         .subpasses(&subpass_descriptions)
         .dependencies(&subpass_dependencies);
 
@@ -670,7 +705,14 @@ pub unsafe fn create_pipeline(device: &Device, app_data: &mut AppData) -> Result
         .sample_shading_enable(false)
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-    let depth_stenci_state_create_info = vk::PipelineDepthStencilStateCreateInfo::builder();
+    let depth_stenci_state_create_info = vk::PipelineDepthStencilStateCreateInfo::builder()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS)
+        .depth_bounds_test_enable(false)
+        .min_depth_bounds(0.0)
+        .max_depth_bounds(1.0)
+        .stencil_test_enable(false);
 
     // This color blending configuration is per attached framebuffer
     let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState::builder()
@@ -761,7 +803,7 @@ pub unsafe fn create_framebuffers(device: &Device, app_data: &mut AppData) -> Re
         .swapchain_image_views
         .iter()
         .map(|i| {
-            let attachments = [*i];
+            let attachments = [*i, app_data.depth_image_view];
             let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(app_data.render_pass)
                 .attachments(&attachments)
@@ -816,11 +858,19 @@ pub unsafe fn create_command_buffers(
         .extent(app_data.swapchain_extent)
         .build();
 
-    let clear_color_values = [vk::ClearValue {
-        color: vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, 1.0],
+    let clear_color_values = [
+        vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
         },
-    }];
+        vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        },
+    ];
 
     for (i, command_buffer) in app_data.command_buffers.iter().enumerate() {
         device.begin_command_buffer(*command_buffer, &command_buffer_begin_info)?;
@@ -1360,8 +1410,27 @@ unsafe fn transition_image_layout(
     old_image_layout: vk::ImageLayout,
     new_image_layout: vk::ImageLayout,
 ) -> Result<(), AppError> {
+    let image_aspect_flags =
+        if new_image_layout == vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL {
+            match format {
+                vk::Format::D32_SFLOAT_S8_UINT | vk::Format::D24_UNORM_S8_UINT => {
+                    vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+                }
+                _ => vk::ImageAspectFlags::DEPTH,
+            }
+        } else {
+            vk::ImageAspectFlags::COLOR
+        };
+
     let (src_access_mask, dst_access_mask, src_stage_mask, dst_stage_mask) =
         match (old_image_layout, new_image_layout) {
+            (vk::ImageLayout::UNDEFINED, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL) => (
+                vk::AccessFlags::empty(),
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+            ),
             (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
                 vk::AccessFlags::empty(),
                 vk::AccessFlags::TRANSFER_WRITE,
@@ -1384,7 +1453,7 @@ unsafe fn transition_image_layout(
     let command_buffer = begin_single_time_commands(device, app_data)?;
 
     let image_subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .aspect_mask(image_aspect_flags)
         .base_mip_level(0)
         .level_count(1)
         .base_array_layer(0)
@@ -1464,8 +1533,12 @@ pub unsafe fn create_texture_image_view(
     device: &Device,
     app_data: &mut AppData,
 ) -> Result<(), AppError> {
-    app_data.texture_image_view =
-        create_image_view(device, app_data.texture_image, vk::Format::R8G8B8A8_SRGB)?;
+    app_data.texture_image_view = create_image_view(
+        device,
+        app_data.texture_image,
+        vk::Format::R8G8B8A8_SRGB,
+        vk::ImageAspectFlags::COLOR,
+    )?;
 
     Ok(())
 }
@@ -1474,9 +1547,10 @@ unsafe fn create_image_view(
     device: &Device,
     image: vk::Image,
     format: vk::Format,
+    image_aspect_flags: vk::ImageAspectFlags,
 ) -> Result<vk::ImageView, AppError> {
     let image_subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .aspect_mask(image_aspect_flags)
         .base_mip_level(0)
         .level_count(1)
         .base_array_layer(0)
@@ -1516,4 +1590,91 @@ pub unsafe fn create_texture_sampler(
     app_data.texture_sampler = device.create_sampler(&sampler_create_info, None)?;
 
     Ok(())
+}
+
+pub unsafe fn create_depth_objects(
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+) -> Result<(), AppError> {
+    let format = get_depth_format(instance, app_data)?;
+
+    let (depth_image, depth_image_memory) = create_image(
+        instance,
+        device,
+        app_data,
+        app_data.swapchain_extent.width,
+        app_data.swapchain_extent.height,
+        format,
+        vk::ImageTiling::OPTIMAL,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    )?;
+
+    app_data.depth_image = depth_image;
+    app_data.depth_image_memory = depth_image_memory;
+
+    app_data.depth_image_view = create_image_view(
+        device,
+        app_data.depth_image,
+        format,
+        vk::ImageAspectFlags::DEPTH,
+    )?;
+
+    transition_image_layout(
+        device,
+        app_data,
+        app_data.depth_image,
+        format,
+        vk::ImageLayout::UNDEFINED,
+        vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    )?;
+
+    Ok(())
+}
+
+unsafe fn get_supported_format(
+    instance: &Instance,
+    app_data: &mut AppData,
+    format_candidates: &[vk::Format],
+    image_tiling: vk::ImageTiling,
+    format_feature_flags: vk::FormatFeatureFlags,
+) -> Result<vk::Format, AppError> {
+    format_candidates
+        .iter()
+        .cloned()
+        .find(|f| {
+            let format_properties =
+                instance.get_physical_device_format_properties(app_data.physical_device, *f);
+
+            match image_tiling {
+                vk::ImageTiling::LINEAR => format_properties
+                    .linear_tiling_features
+                    .contains(format_feature_flags),
+                vk::ImageTiling::OPTIMAL => format_properties
+                    .optimal_tiling_features
+                    .contains(format_feature_flags),
+                _ => false,
+            }
+        })
+        .ok_or(SuitabilityError("Failed to find supported format!".to_string()).into())
+}
+
+unsafe fn get_depth_format(
+    instance: &Instance,
+    app_data: &mut AppData,
+) -> Result<vk::Format, AppError> {
+    let format_candidates = [
+        vk::Format::D32_SFLOAT,
+        vk::Format::D32_SFLOAT_S8_UINT,
+        vk::Format::D24_UNORM_S8_UINT,
+    ];
+
+    get_supported_format(
+        instance,
+        app_data,
+        &format_candidates,
+        vk::ImageTiling::OPTIMAL,
+        vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+    )
 }

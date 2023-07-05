@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::vulkan;
+use crate::vulkan::{self, create_depth_objects};
 use crate::vulkan::{UniformBufferObject, Vertex, MAX_FRAMES_IN_FLIGHT, VALIDATION_ENABLED};
 use ash::{extensions, vk, Device, Entry, Instance};
 use nalgebra::{Matrix4, OPoint, Point3, Vector2, Vector3};
@@ -20,25 +20,45 @@ pub struct App {
 
 impl App {
     pub fn new(window: &Window) -> Result<Self, AppError> {
-        let indices: Vec<u16> = vec![0, 1, 2, 2, 3, 0];
+        let indices: Vec<u16> = vec![0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4];
         let vertecies = vec![
             Vertex::new(
-                Vector2::new(-0.5, -0.5),
+                Vector3::new(-0.5, -0.5, 0.0),
                 Vector3::new(1.0, 0.0, 0.0),
                 Vector2::new(1.0, 0.0),
             ),
             Vertex::new(
-                Vector2::new(0.5, -0.5),
+                Vector3::new(0.5, -0.5, 0.0),
                 Vector3::new(0.0, 1.0, 0.0),
                 Vector2::new(0.0, 0.0),
             ),
             Vertex::new(
-                Vector2::new(0.5, 0.5),
+                Vector3::new(0.5, 0.5, 0.0),
                 Vector3::new(0.0, 0.0, 1.0),
                 Vector2::new(0.0, 1.0),
             ),
             Vertex::new(
-                Vector2::new(-0.5, 0.5),
+                Vector3::new(-0.5, 0.5, 0.0),
+                Vector3::new(1.0, 1.0, 1.0),
+                Vector2::new(1.0, 1.0),
+            ),
+            Vertex::new(
+                Vector3::new(-0.5, -0.5, -0.5),
+                Vector3::new(1.0, 0.0, 0.0),
+                Vector2::new(1.0, 0.0),
+            ),
+            Vertex::new(
+                Vector3::new(0.5, -0.5, -0.5),
+                Vector3::new(0.0, 1.0, 0.0),
+                Vector2::new(0.0, 0.0),
+            ),
+            Vertex::new(
+                Vector3::new(0.5, 0.5, -0.5),
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector2::new(0.0, 1.0),
+            ),
+            Vertex::new(
+                Vector3::new(-0.5, 0.5, -0.5),
                 Vector3::new(1.0, 1.0, 1.0),
                 Vector2::new(1.0, 1.0),
             ),
@@ -74,9 +94,11 @@ impl App {
 
             vulkan::create_pipeline(&device, &mut app_data)?;
 
-            vulkan::create_framebuffers(&device, &mut app_data)?;
-
             vulkan::create_command_pool(&entry, &instance, &device, &mut app_data)?;
+
+            create_depth_objects(&instance, &device, &mut app_data)?;
+
+            vulkan::create_framebuffers(&device, &mut app_data)?;
 
             vulkan::create_texture_image(&instance, &device, &mut app_data)?;
 
@@ -217,6 +239,7 @@ impl App {
             vulkan::create_swapchain_image_views(&self.device, &mut self.app_data)?;
             vulkan::create_render_pass(&self.instance, &self.device, &mut self.app_data)?;
             vulkan::create_pipeline(&self.device, &mut self.app_data)?;
+            vulkan::create_depth_objects(&self.instance, &self.device, &mut self.app_data)?;
             vulkan::create_framebuffers(&self.device, &mut self.app_data)?;
             vulkan::create_uniform_buffers(&self.instance, &self.device, &mut self.app_data)?;
             vulkan::create_descriptor_pool(&self.device, &mut self.app_data)?;
@@ -243,6 +266,14 @@ impl App {
             .uniform_buffers_memories
             .iter()
             .for_each(|m| self.device.free_memory(*m, None));
+
+        self.device
+            .destroy_image_view(self.app_data.depth_image_view, None);
+
+        self.device.destroy_image(self.app_data.depth_image, None);
+
+        self.device
+            .free_memory(self.app_data.depth_image_memory, None);
 
         self.app_data
             .framebuffers
@@ -410,4 +441,7 @@ pub struct AppData {
     pub texture_image_memory: vk::DeviceMemory,
     pub texture_image_view: vk::ImageView,
     pub texture_sampler: vk::Sampler,
+    pub depth_image: vk::Image,
+    pub depth_image_memory: vk::DeviceMemory,
+    pub depth_image_view: vk::ImageView,
 }
