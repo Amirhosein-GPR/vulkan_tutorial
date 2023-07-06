@@ -3,11 +3,14 @@ use crate::error::{AppError, SuitabilityError};
 use ash::{extensions, vk, Device, Entry, Instance};
 use log::{error, info, trace, warn};
 use nalgebra::{Matrix4, Vector2, Vector3};
-use png::Decoder;
-use std::collections::HashSet;
+use png::{ColorType, Decoder};
+use std::collections::{HashMap, HashSet};
 use std::ffi::{c_void, CStr, CString};
 use std::fs::{self, File};
+use std::hash::{Hash, Hasher};
+use std::io::BufReader;
 use std::{mem, ptr};
+use tobj::{self, LoadOptions};
 use winit::platform::x11::WindowExtX11;
 use winit::window::Window;
 
@@ -18,12 +21,6 @@ const VALIDATION_LAYER_NAME: &CStr =
     unsafe { &CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
 const DEVICE_EXTENSIONS_NAMES: &[&CStr] = &[extensions::khr::Swapchain::name()];
 pub const MAX_FRAMES_IN_FLIGHT: u8 = 2;
-
-// static VERTECIES: [Vertex; 3] = [
-//     Vertex::new(Vector2::new(0.0, -0.5), Vector3::new(1.0, 0.0, 0.0)),
-//     Vertex::new(Vector2::new(0.5, 0.5), Vector3::new(0.0, 1.0, 0.0)),
-//     Vertex::new(Vector2::new(-0.5, 0.5), Vector3::new(0.0, 0.0, 1.0)),
-// ];
 
 struct QueueFamilyIndices {
     graphics_queue_family: u32,
@@ -104,6 +101,7 @@ impl SwapchainSupport {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Vertex {
     position: Vector3<f32>,
     color: Vector3<f32>,
@@ -152,6 +150,29 @@ impl Vertex {
             .build();
 
         [position, color, texture_coordinate]
+    }
+}
+
+impl PartialEq for Vertex {
+    fn eq(&self, other: &Self) -> bool {
+        self.position == other.position
+            && self.color == other.color
+            && self.texture_coordinate == other.texture_coordinate
+    }
+}
+
+impl Eq for Vertex {}
+
+impl Hash for Vertex {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.position[0].to_bits().hash(state);
+        self.position[1].to_bits().hash(state);
+        self.position[2].to_bits().hash(state);
+        self.color[0].to_bits().hash(state);
+        self.color[1].to_bits().hash(state);
+        self.color[2].to_bits().hash(state);
+        self.texture_coordinate[0].to_bits().hash(state);
+        self.texture_coordinate[1].to_bits().hash(state);
     }
 }
 
@@ -896,7 +917,7 @@ pub unsafe fn create_command_buffers(
             *command_buffer,
             app_data.index_buffer,
             0,
-            vk::IndexType::UINT16,
+            vk::IndexType::UINT32,
         );
         device.cmd_bind_descriptor_sets(
             *command_buffer,
@@ -1021,7 +1042,7 @@ pub unsafe fn create_vertex_buffer(
     device: &Device,
     app_data: &mut AppData,
 ) -> Result<(), AppError> {
-    let size = (mem::size_of::<Vertex>() * app_data.vertecies.len()) as u64;
+    let size = (mem::size_of::<Vertex>() * app_data.vertices.len()) as u64;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance,
@@ -1035,9 +1056,9 @@ pub unsafe fn create_vertex_buffer(
     let memory = device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())?;
 
     ptr::copy_nonoverlapping(
-        app_data.vertecies.as_ptr(),
+        app_data.vertices.as_ptr(),
         memory.cast(),
-        app_data.vertecies.len(),
+        app_data.vertices.len(),
     );
 
     device.unmap_memory(staging_buffer_memory);
@@ -1067,7 +1088,7 @@ pub unsafe fn create_index_buffer(
     device: &Device,
     app_data: &mut AppData,
 ) -> Result<(), AppError> {
-    let size = (mem::size_of::<u16>() * app_data.indices.len()) as u64;
+    let size = (mem::size_of::<u32>() * app_data.indices.len()) as u64;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance,
@@ -1240,7 +1261,7 @@ pub unsafe fn create_texture_image(
     device: &Device,
     app_data: &mut AppData,
 ) -> Result<(), AppError> {
-    let image_file = File::open("resources/texture.png")?;
+    let image_file = File::open("resources/viking_room.png")?;
 
     let decoder = Decoder::new(image_file);
     let mut reader = decoder.read_info()?;
@@ -1251,6 +1272,10 @@ pub unsafe fn create_texture_image(
     reader.next_frame(&mut pixels)?;
 
     let (width, height) = reader.info().size();
+
+    if width != 1024 || height != 1024 || reader.info().color_type != ColorType::Rgba {
+        return Err(SuitabilityError("Invalid texture image.".to_string()))?;
+    }
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance,
@@ -1677,4 +1702,50 @@ unsafe fn get_depth_format(
         vk::ImageTiling::OPTIMAL,
         vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
     )
+}
+
+pub unsafe fn load_model(app_data: &mut AppData) -> Result<(), AppError> {
+    let mut reader = BufReader::new(File::open("resources/viking_room.obj")?);
+
+    let (models, _) = tobj::load_obj_buf(
+        &mut reader,
+        &LoadOptions {
+            triangulate: true,
+            ..Default::default()
+        },
+        |_| Ok(Default::default()),
+    )?;
+
+    let mut unique_vertices = HashMap::new();
+
+    for model in models {
+        for index in model.mesh.indices {
+            let positions_offset = (3 * index) as usize;
+            let texture_coordinate_offset = (2 * index) as usize;
+
+            let vertex = Vertex {
+                position: Vector3::new(
+                    model.mesh.positions[positions_offset],
+                    model.mesh.positions[positions_offset + 1],
+                    model.mesh.positions[positions_offset + 2],
+                ),
+                color: Vector3::new(1.0, 1.0, 1.0),
+                texture_coordinate: Vector2::new(
+                    model.mesh.texcoords[texture_coordinate_offset],
+                    1.0 - model.mesh.texcoords[texture_coordinate_offset + 1],
+                ),
+            };
+
+            if let Some(index) = unique_vertices.get(&vertex) {
+                app_data.indices.push(*index as u32);
+            } else {
+                let index = app_data.vertices.len();
+                unique_vertices.insert(vertex, index);
+                app_data.vertices.push(vertex);
+                app_data.indices.push(index as u32);
+            }
+        }
+    }
+
+    Ok(())
 }

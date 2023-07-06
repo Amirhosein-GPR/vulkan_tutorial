@@ -2,6 +2,7 @@ use ash::{vk, LoadingError};
 use png::DecodingError;
 use std::io;
 use std::{error::Error, fmt::Display};
+use tobj::{LoadError, LoadResult};
 use winit::error::OsError;
 
 // All errors in this application are one of these variants, or can be transfered to one of these.
@@ -58,6 +59,12 @@ impl From<io::Error> for AppError {
 impl From<DecodingError> for AppError {
     fn from(value: DecodingError) -> Self {
         Self::EngineError(value.to_string())
+    }
+}
+
+impl From<LoadError> for AppError {
+    fn from(value: LoadError) -> Self {
+        Self::EngineError(format!("{:?}", value))
     }
 }
 

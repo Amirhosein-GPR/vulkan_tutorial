@@ -20,53 +20,7 @@ pub struct App {
 
 impl App {
     pub fn new(window: &Window) -> Result<Self, AppError> {
-        let indices: Vec<u16> = vec![0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4];
-        let vertecies = vec![
-            Vertex::new(
-                Vector3::new(-0.5, -0.5, 0.0),
-                Vector3::new(1.0, 0.0, 0.0),
-                Vector2::new(1.0, 0.0),
-            ),
-            Vertex::new(
-                Vector3::new(0.5, -0.5, 0.0),
-                Vector3::new(0.0, 1.0, 0.0),
-                Vector2::new(0.0, 0.0),
-            ),
-            Vertex::new(
-                Vector3::new(0.5, 0.5, 0.0),
-                Vector3::new(0.0, 0.0, 1.0),
-                Vector2::new(0.0, 1.0),
-            ),
-            Vertex::new(
-                Vector3::new(-0.5, 0.5, 0.0),
-                Vector3::new(1.0, 1.0, 1.0),
-                Vector2::new(1.0, 1.0),
-            ),
-            Vertex::new(
-                Vector3::new(-0.5, -0.5, -0.5),
-                Vector3::new(1.0, 0.0, 0.0),
-                Vector2::new(1.0, 0.0),
-            ),
-            Vertex::new(
-                Vector3::new(0.5, -0.5, -0.5),
-                Vector3::new(0.0, 1.0, 0.0),
-                Vector2::new(0.0, 0.0),
-            ),
-            Vertex::new(
-                Vector3::new(0.5, 0.5, -0.5),
-                Vector3::new(0.0, 0.0, 1.0),
-                Vector2::new(0.0, 1.0),
-            ),
-            Vertex::new(
-                Vector3::new(-0.5, 0.5, -0.5),
-                Vector3::new(1.0, 1.0, 1.0),
-                Vector2::new(1.0, 1.0),
-            ),
-        ];
-
         let mut app_data = AppData::default();
-        app_data.vertecies = vertecies;
-        app_data.indices = indices;
 
         // Creating Vulkan entry point. The first thing we need to create before even creating the Vulkan instance.
         let entry = unsafe { Entry::load() }?;
@@ -105,6 +59,8 @@ impl App {
             vulkan::create_texture_image_view(&device, &mut app_data)?;
 
             vulkan::create_texture_sampler(&device, &mut app_data)?;
+
+            vulkan::load_model(&mut app_data)?;
 
             vulkan::create_vertex_buffer(&instance, &device, &mut app_data)?;
 
@@ -427,8 +383,8 @@ pub struct AppData {
     pub render_finished_semaphores: Vec<vk::Semaphore>,
     pub in_flight_frame_fences: Vec<vk::Fence>,
     pub in_flight_image_fences: Vec<vk::Fence>,
-    pub vertecies: Vec<Vertex>,
-    pub indices: Vec<u16>,
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
     pub vertex_buffer: vk::Buffer,
     pub vertex_buffer_memory: vk::DeviceMemory,
     pub index_buffer: vk::Buffer,
