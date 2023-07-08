@@ -592,6 +592,7 @@ pub unsafe fn create_swapchain_image_views(
                 *i,
                 app_data.swapchain_format,
                 vk::ImageAspectFlags::COLOR,
+                1,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1272,6 +1273,7 @@ pub unsafe fn create_texture_image(
     reader.next_frame(&mut pixels)?;
 
     let (width, height) = reader.info().size();
+    app_data.mip_levels = (width.max(height) as f32).log2().floor() as u32 + 1;
 
     if width != 1024 || height != 1024 || reader.info().color_type != ColorType::Rgba {
         return Err(SuitabilityError("Invalid texture image.".to_string()))?;
@@ -1298,9 +1300,12 @@ pub unsafe fn create_texture_image(
         app_data,
         width,
         height,
+        app_data.mip_levels,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageTiling::OPTIMAL,
-        vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+        vk::ImageUsageFlags::SAMPLED
+            | vk::ImageUsageFlags::TRANSFER_DST
+            | vk::ImageUsageFlags::TRANSFER_SRC,
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
     )?;
 
@@ -1314,6 +1319,7 @@ pub unsafe fn create_texture_image(
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageLayout::UNDEFINED,
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        app_data.mip_levels,
     )?;
 
     copy_buffer_to_image(
@@ -1325,17 +1331,19 @@ pub unsafe fn create_texture_image(
         height,
     )?;
 
-    transition_image_layout(
+    device.destroy_buffer(staging_buffer, None);
+    device.free_memory(staging_buffer_memory, None);
+
+    generate_mipmaps(
+        instance,
         device,
         app_data,
         app_data.texture_image,
         vk::Format::R8G8B8A8_SRGB,
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        width,
+        height,
+        app_data.mip_levels,
     )?;
-
-    device.destroy_buffer(staging_buffer, None);
-    device.free_memory(staging_buffer_memory, None);
 
     Ok(())
 }
@@ -1346,6 +1354,7 @@ unsafe fn create_image(
     app_data: &mut AppData,
     width: u32,
     height: u32,
+    mip_levels: u32,
     format: vk::Format,
     image_tiling: vk::ImageTiling,
     image_usage_flags: vk::ImageUsageFlags,
@@ -1359,7 +1368,7 @@ unsafe fn create_image(
             height,
             depth: 1,
         })
-        .mip_levels(1)
+        .mip_levels(mip_levels)
         .array_layers(1)
         .samples(vk::SampleCountFlags::TYPE_1)
         .tiling(image_tiling)
@@ -1434,6 +1443,7 @@ unsafe fn transition_image_layout(
     format: vk::Format,
     old_image_layout: vk::ImageLayout,
     new_image_layout: vk::ImageLayout,
+    mip_levels: u32,
 ) -> Result<(), AppError> {
     let image_aspect_flags =
         if new_image_layout == vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL {
@@ -1480,7 +1490,7 @@ unsafe fn transition_image_layout(
     let image_subresource_range = vk::ImageSubresourceRange::builder()
         .aspect_mask(image_aspect_flags)
         .base_mip_level(0)
-        .level_count(1)
+        .level_count(mip_levels)
         .base_array_layer(0)
         .layer_count(1)
         .build();
@@ -1563,6 +1573,7 @@ pub unsafe fn create_texture_image_view(
         app_data.texture_image,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageAspectFlags::COLOR,
+        app_data.mip_levels,
     )?;
 
     Ok(())
@@ -1573,11 +1584,12 @@ unsafe fn create_image_view(
     image: vk::Image,
     format: vk::Format,
     image_aspect_flags: vk::ImageAspectFlags,
+    mip_levels: u32,
 ) -> Result<vk::ImageView, AppError> {
     let image_subresource_range = vk::ImageSubresourceRange::builder()
         .aspect_mask(image_aspect_flags)
         .base_mip_level(0)
-        .level_count(1)
+        .level_count(mip_levels)
         .base_array_layer(0)
         .layer_count(1)
         .build();
@@ -1608,7 +1620,7 @@ pub unsafe fn create_texture_sampler(
         .compare_enable(false)
         .compare_op(vk::CompareOp::ALWAYS)
         .min_lod(0.0)
-        .max_lod(0.0)
+        .max_lod(app_data.mip_levels as f32)
         .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
         .unnormalized_coordinates(false);
 
@@ -1630,6 +1642,7 @@ pub unsafe fn create_depth_objects(
         app_data,
         app_data.swapchain_extent.width,
         app_data.swapchain_extent.height,
+        1,
         format,
         vk::ImageTiling::OPTIMAL,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
@@ -1644,6 +1657,7 @@ pub unsafe fn create_depth_objects(
         app_data.depth_image,
         format,
         vk::ImageAspectFlags::DEPTH,
+        1,
     )?;
 
     transition_image_layout(
@@ -1653,6 +1667,7 @@ pub unsafe fn create_depth_objects(
         format,
         vk::ImageLayout::UNDEFINED,
         vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        1,
     )?;
 
     Ok(())
@@ -1746,6 +1761,153 @@ pub unsafe fn load_model(app_data: &mut AppData) -> Result<(), AppError> {
             }
         }
     }
+
+    Ok(())
+}
+
+unsafe fn generate_mipmaps(
+    instance: &Instance,
+    device: &Device,
+    app_data: &mut AppData,
+    image: vk::Image,
+    format: vk::Format,
+    width: u32,
+    height: u32,
+    mip_levels: u32,
+) -> Result<(), AppError> {
+    if !instance
+        .get_physical_device_format_properties(app_data.physical_device, format)
+        .optimal_tiling_features
+        .contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR)
+    {
+        return Err(SuitabilityError(
+            "Texture image format does not support linear blitting!".to_string(),
+        ))?;
+    }
+
+    let command_buffer = begin_single_time_commands(device, app_data)?;
+
+    let image_subresource_range = vk::ImageSubresourceRange::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .level_count(1)
+        .base_array_layer(0)
+        .layer_count(1)
+        .build();
+
+    let mut image_memory_barrier = vk::ImageMemoryBarrier {
+        image,
+        src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+        dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+        subresource_range: image_subresource_range,
+        ..Default::default()
+    };
+
+    let mut mip_width = width;
+    let mut mip_height = height;
+
+    for i in 1..mip_levels {
+        image_memory_barrier.subresource_range.base_mip_level = i - 1;
+        image_memory_barrier.old_layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
+        image_memory_barrier.new_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+        image_memory_barrier.src_access_mask = vk::AccessFlags::TRANSFER_WRITE;
+        image_memory_barrier.dst_access_mask = vk::AccessFlags::TRANSFER_READ;
+
+        device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[image_memory_barrier],
+        );
+
+        let src_subresource = vk::ImageSubresourceLayers::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .mip_level(i - 1)
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
+
+        let dst_subresource = vk::ImageSubresourceLayers::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .mip_level(i)
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
+
+        let image_blit = vk::ImageBlit::builder()
+            .src_subresource(src_subresource)
+            .src_offsets([
+                vk::Offset3D { x: 0, y: 0, z: 0 },
+                vk::Offset3D {
+                    x: mip_width as i32,
+                    y: mip_height as i32,
+                    z: 1,
+                },
+            ])
+            .dst_subresource(dst_subresource)
+            .dst_offsets([
+                vk::Offset3D { x: 0, y: 0, z: 0 },
+                vk::Offset3D {
+                    x: (if mip_width > 1 { mip_width / 2 } else { 1 }) as i32,
+                    y: (if mip_height > 1 { mip_height / 2 } else { 1 }) as i32,
+                    z: 1,
+                },
+            ])
+            .build();
+
+        device.cmd_blit_image(
+            command_buffer,
+            image,
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            &[image_blit],
+            vk::Filter::LINEAR,
+        );
+
+        image_memory_barrier.old_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+        image_memory_barrier.new_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        image_memory_barrier.src_access_mask = vk::AccessFlags::TRANSFER_READ;
+        image_memory_barrier.dst_access_mask = vk::AccessFlags::SHADER_READ;
+
+        device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[image_memory_barrier],
+        );
+
+        if mip_width > 1 {
+            mip_width /= 2;
+        }
+
+        if mip_height > 1 {
+            mip_height /= 2;
+        }
+    }
+
+    image_memory_barrier.subresource_range.base_mip_level = mip_levels - 1;
+    image_memory_barrier.old_layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
+    image_memory_barrier.new_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+    image_memory_barrier.src_access_mask = vk::AccessFlags::TRANSFER_WRITE;
+    image_memory_barrier.dst_access_mask = vk::AccessFlags::SHADER_READ;
+
+    device.cmd_pipeline_barrier(
+        command_buffer,
+        vk::PipelineStageFlags::TRANSFER,
+        vk::PipelineStageFlags::FRAGMENT_SHADER,
+        vk::DependencyFlags::empty(),
+        &[],
+        &[],
+        &[image_memory_barrier],
+    );
+
+    end_single_time_commands(device, app_data, command_buffer)?;
 
     Ok(())
 }
