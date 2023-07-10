@@ -2,7 +2,7 @@ use ash::{vk, LoadingError};
 use png::DecodingError;
 use std::io;
 use std::{error::Error, fmt::Display};
-use tobj::{LoadError, LoadResult};
+use tobj::LoadError;
 use winit::error::OsError;
 
 // All errors in this application are one of these variants, or can be transfered to one of these.

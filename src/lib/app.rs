@@ -1,8 +1,7 @@
 use crate::error::AppError;
-use crate::vulkan::{self, create_depth_objects};
-use crate::vulkan::{UniformBufferObject, Vertex, MAX_FRAMES_IN_FLIGHT, VALIDATION_ENABLED};
+use crate::vulkan::{self, UniformBufferObject, Vertex, MAX_FRAMES_IN_FLIGHT, VALIDATION_ENABLED};
 use ash::{extensions, vk, Device, Entry, Instance};
-use nalgebra::{Matrix4, OPoint, Point3, Vector2, Vector3};
+use nalgebra::{Matrix4, Point3, Vector3};
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 use std::time::Instant;
 use std::{mem, ptr};
@@ -50,7 +49,9 @@ impl App {
 
             vulkan::create_command_pool(&entry, &instance, &device, &mut app_data)?;
 
-            create_depth_objects(&instance, &device, &mut app_data)?;
+            vulkan::create_color_objects(&instance, &device, &mut app_data)?;
+
+            vulkan::create_depth_objects(&instance, &device, &mut app_data)?;
 
             vulkan::create_framebuffers(&device, &mut app_data)?;
 
@@ -195,6 +196,7 @@ impl App {
             vulkan::create_swapchain_image_views(&self.device, &mut self.app_data)?;
             vulkan::create_render_pass(&self.instance, &self.device, &mut self.app_data)?;
             vulkan::create_pipeline(&self.device, &mut self.app_data)?;
+            vulkan::create_color_objects(&self.instance, &self.device, &mut self.app_data)?;
             vulkan::create_depth_objects(&self.instance, &self.device, &mut self.app_data)?;
             vulkan::create_framebuffers(&self.device, &mut self.app_data)?;
             vulkan::create_uniform_buffers(&self.instance, &self.device, &mut self.app_data)?;
@@ -210,6 +212,14 @@ impl App {
     }
 
     unsafe fn destroy_swapchain(&mut self) {
+        self.device
+            .destroy_image_view(self.app_data.color_image_view, None);
+
+        self.device
+            .free_memory(self.app_data.color_image_memory, None);
+
+        self.device.destroy_image(self.app_data.color_image, None);
+
         self.device
             .destroy_descriptor_pool(self.app_data.descriptor_pool, None);
 
@@ -364,6 +374,7 @@ impl Drop for App {
 pub struct AppData {
     pub debug_utils_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
+    pub msaa_samples: vk::SampleCountFlags,
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,
     pub surface: vk::SurfaceKHR,
@@ -401,4 +412,7 @@ pub struct AppData {
     pub depth_image: vk::Image,
     pub depth_image_memory: vk::DeviceMemory,
     pub depth_image_view: vk::ImageView,
+    pub color_image: vk::Image,
+    pub color_image_memory: vk::DeviceMemory,
+    pub color_image_view: vk::ImageView,
 }
