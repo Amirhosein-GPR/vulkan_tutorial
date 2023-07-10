@@ -2,7 +2,7 @@ use crate::error::AppError;
 use crate::vulkan::{self, UniformBufferObject, Vertex, MAX_FRAMES_IN_FLIGHT, VALIDATION_ENABLED};
 use ash::{extensions, vk, Device, Entry, Instance};
 use nalgebra::{Matrix4, Point3, Vector3};
-use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+use std::f32::consts::FRAC_PI_4;
 use std::time::Instant;
 use std::{mem, ptr};
 use winit::window::Window;
@@ -269,8 +269,6 @@ impl App {
     unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<(), AppError> {
         let time = self.start.elapsed().as_secs_f32();
 
-        let model = Matrix4::from_axis_angle(&Vector3::z_axis(), time * FRAC_PI_2);
-
         let view = Matrix4::look_at_rh(
             &Point3::<f32>::new(2.0, 2.0, 2.0),
             &Point3::<f32>::new(0.0, 0.0, 0.0),
@@ -287,11 +285,7 @@ impl App {
 
         project[(1, 1)] *= -1.0;
 
-        let ubo = UniformBufferObject {
-            model,
-            view,
-            project,
-        };
+        let ubo = UniformBufferObject { view, project };
 
         let memory = self.device.map_memory(
             self.app_data.uniform_buffers_memories[image_index],

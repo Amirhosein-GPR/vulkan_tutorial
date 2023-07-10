@@ -178,7 +178,6 @@ impl Hash for Vertex {
 
 #[repr(C)]
 pub struct UniformBufferObject {
-    pub model: Matrix4<f32>,
     pub view: Matrix4<f32>,
     pub project: Matrix4<f32>,
 }
@@ -760,9 +759,9 @@ pub unsafe fn create_pipeline(device: &Device, app_data: &mut AppData) -> Result
     // This color blending configuration is per attached framebuffer
     let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState::builder()
         .color_write_mask(vk::ColorComponentFlags::RGBA)
-        .blend_enable(false)
-        .src_color_blend_factor(vk::BlendFactor::ONE)
-        .dst_color_blend_factor(vk::BlendFactor::ZERO)
+        .blend_enable(true)
+        .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
         .color_blend_op(vk::BlendOp::ADD)
         .src_alpha_blend_factor(vk::BlendFactor::ONE)
         .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
@@ -781,10 +780,22 @@ pub unsafe fn create_pipeline(device: &Device, app_data: &mut AppData) -> Result
     // let dynamic_state_create_info =
     //     vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
 
+    let vertex_push_constant_range = vk::PushConstantRange::builder()
+        .stage_flags(vk::ShaderStageFlags::VERTEX)
+        .offset(0)
+        .size(64)
+        .build();
+    let fragment_push_constant_range = vk::PushConstantRange::builder()
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        .offset(64)
+        .size(4)
+        .build();
+    let push_constant_ranges = [vertex_push_constant_range, fragment_push_constant_range];
     // Pipeline layout is used for creating uniform values which are used in shaders and their values can be changed at drawing times.
     let descriptor_set_layouts = [app_data.descriptor_set_layout];
-    let pipeline_layout_create_info =
-        vk::PipelineLayoutCreateInfo::builder().set_layouts(&descriptor_set_layouts);
+    let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder()
+        .set_layouts(&descriptor_set_layouts)
+        .push_constant_ranges(&push_constant_ranges);
 
     app_data.pipeline_layout = device.create_pipeline_layout(&pipeline_layout_create_info, None)?;
 
@@ -915,6 +926,9 @@ pub unsafe fn create_command_buffers(
         },
     ];
 
+    let model = Matrix4::<f32>::from_axis_angle(&Vector3::z_axis(), 0.0);
+    let (_, model_bytes, _) = model.as_slice().align_to::<u8>();
+
     for (i, command_buffer) in app_data.command_buffers.iter().enumerate() {
         device.begin_command_buffer(*command_buffer, &command_buffer_begin_info)?;
 
@@ -948,6 +962,20 @@ pub unsafe fn create_command_buffers(
             0,
             &[app_data.descriptor_sets[i]],
             &[],
+        );
+        device.cmd_push_constants(
+            *command_buffer,
+            app_data.pipeline_layout,
+            vk::ShaderStageFlags::VERTEX,
+            0,
+            model_bytes,
+        );
+        device.cmd_push_constants(
+            *command_buffer,
+            app_data.pipeline_layout,
+            vk::ShaderStageFlags::FRAGMENT,
+            64,
+            &0.25f32.to_ne_bytes(),
         );
         device.cmd_draw_indexed(*command_buffer, app_data.indices.len() as u32, 1, 0, 0, 0);
         device.cmd_end_render_pass(*command_buffer);
