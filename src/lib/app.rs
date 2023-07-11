@@ -47,7 +47,7 @@ impl App {
 
             vulkan::create_pipeline(&device, &mut app_data)?;
 
-            vulkan::create_command_pool(&entry, &instance, &device, &mut app_data)?;
+            vulkan::create_command_pools(&entry, &instance, &device, &mut app_data)?;
 
             vulkan::create_color_objects(&instance, &device, &mut app_data)?;
 
@@ -130,6 +130,7 @@ impl App {
             self.app_data.in_flight_frame_fences[self.frame as usize];
 
         unsafe {
+            self.update_command_buffer(image_index as usize)?;
             self.update_uniform_buffer(image_index as usize)?;
         }
 
@@ -246,9 +247,6 @@ impl App {
             .iter()
             .for_each(|f| self.device.destroy_framebuffer(*f, None));
 
-        self.device
-            .free_command_buffers(self.app_data.command_pool, &self.app_data.command_buffers);
-
         self.device.destroy_pipeline(self.app_data.pipeline, None);
 
         self.device
@@ -267,8 +265,6 @@ impl App {
     }
 
     unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<(), AppError> {
-        let time = self.start.elapsed().as_secs_f32();
-
         let view = Matrix4::look_at_rh(
             &Point3::<f32>::new(2.0, 2.0, 2.0),
             &Point3::<f32>::new(0.0, 0.0, 0.0),
@@ -301,12 +297,121 @@ impl App {
 
         Ok(())
     }
+
+    unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<(), AppError> {
+        let command_pool = self.app_data.command_pools[image_index];
+        self.device
+            .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
+
+        let command_buffer = self.app_data.command_buffers[image_index];
+
+        let time = self.start.elapsed().as_secs_f32();
+
+        let model = Matrix4::<f32>::from_axis_angle(&Vector3::z_axis(), time * FRAC_PI_4);
+        let (_, model_bytes, _) = model.as_slice().align_to::<u8>();
+
+        // Only relevant for secondary command buffers.
+        let command_buffer_inheritance_info = vk::CommandBufferInheritanceInfo::builder();
+        let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+            .inheritance_info(&command_buffer_inheritance_info);
+        self.device
+            .begin_command_buffer(command_buffer, &command_buffer_begin_info)?;
+
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(self.app_data.swapchain_extent)
+            .build();
+
+        let clear_color_depth_stencil_values = [
+            vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.0, 0.0, 0.0, 1.0],
+                },
+            },
+            vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            },
+        ];
+
+        let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
+            .render_pass(self.app_data.render_pass)
+            .framebuffer(self.app_data.framebuffers[image_index])
+            .render_area(render_area)
+            .clear_values(&clear_color_depth_stencil_values);
+
+        self.device.cmd_begin_render_pass(
+            command_buffer,
+            &render_pass_begin_info,
+            vk::SubpassContents::INLINE,
+        );
+        self.device.cmd_bind_pipeline(
+            command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            self.app_data.pipeline,
+        );
+        self.device.cmd_bind_vertex_buffers(
+            command_buffer,
+            0,
+            &[self.app_data.vertex_buffer],
+            &[0],
+        );
+        self.device.cmd_bind_index_buffer(
+            command_buffer,
+            self.app_data.index_buffer,
+            0,
+            vk::IndexType::UINT32,
+        );
+        self.device.cmd_bind_descriptor_sets(
+            command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            self.app_data.pipeline_layout,
+            0,
+            &[self.app_data.descriptor_sets[image_index]],
+            &[],
+        );
+        self.device.cmd_push_constants(
+            command_buffer,
+            self.app_data.pipeline_layout,
+            vk::ShaderStageFlags::VERTEX,
+            0,
+            model_bytes,
+        );
+        self.device.cmd_push_constants(
+            command_buffer,
+            self.app_data.pipeline_layout,
+            vk::ShaderStageFlags::FRAGMENT,
+            64,
+            &0.25f32.to_ne_bytes(),
+        );
+        self.device.cmd_draw_indexed(
+            command_buffer,
+            self.app_data.indices.len() as u32,
+            1,
+            0,
+            0,
+            0,
+        );
+        self.device.cmd_end_render_pass(command_buffer);
+
+        self.device.end_command_buffer(command_buffer)?;
+
+        Ok(())
+    }
 }
 
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
             self.destroy_swapchain();
+
+            self.app_data
+                .command_pools
+                .iter()
+                .for_each(|p| self.device.destroy_command_pool(*p, None));
 
             self.device
                 .destroy_sampler(self.app_data.texture_sampler, None);
@@ -383,6 +488,7 @@ pub struct AppData {
     pub pipeline: vk::Pipeline,
     pub framebuffers: Vec<vk::Framebuffer>,
     pub command_pool: vk::CommandPool,
+    pub command_pools: Vec<vk::CommandPool>,
     pub command_buffers: Vec<vk::CommandBuffer>,
     pub image_available_semaphores: Vec<vk::Semaphore>,
     pub render_finished_semaphores: Vec<vk::Semaphore>,
