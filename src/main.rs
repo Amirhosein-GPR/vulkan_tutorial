@@ -9,7 +9,7 @@ use pretty_env_logger;
 use vulkan_tutorial::app::App;
 use vulkan_tutorial::error::AppError;
 use winit::dpi::LogicalSize;
-use winit::event::{Event, WindowEvent};
+use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
 
@@ -55,6 +55,18 @@ fn main() -> Result<(), AppError> {
                 *control_flow = ControlFlow::Exit;
                 unsafe {
                     app.device.device_wait_idle().unwrap();
+                }
+            }
+            Event::WindowEvent {
+                event: WindowEvent::KeyboardInput { input, .. },
+                ..
+            } => {
+                if input.state == ElementState::Pressed {
+                    match input.virtual_keycode {
+                        Some(VirtualKeyCode::Left) if app.models > 1 => app.models -= 1,
+                        Some(VirtualKeyCode::Right) if app.models < 4 => app.models += 1,
+                        _ => {}
+                    }
                 }
             }
             _ => {}

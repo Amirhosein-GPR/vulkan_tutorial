@@ -921,6 +921,8 @@ pub unsafe fn create_command_buffers(
         app_data.command_buffers.push(command_buffer)
     }
 
+    app_data.secondary_command_buffers = vec![vec![]; app_data.swapchain_images.len()];
+
     Ok(())
 }
 
